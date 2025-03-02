@@ -28,10 +28,14 @@ from supabase import create_client, Client
 
 
 class tradeAction:
-    BUY = "BUY"
+    BUY = "BOUGHT"
     SELL = "SELL"
-    CLOSE = "CLOSE"
+    CLOSE = "CLOSED"
     SPREAD = "SPREAD"
+    BTO='BTO'
+    STC='STC'
+    STO='STO'
+    BTC='BTC'
 
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
@@ -164,7 +168,7 @@ def fetch_share_price(ticker: str) -> float:
         st.error(f"❌ Failed fetching {ticker} Price")
     return 0.0
 
-@st.cache_data(ttl=60*60)
+@st.cache_data(ttl=60*5)
 def get_options_chain(symbol: str):
     """Returns the JSON from your custom API structure:
        { "options": {
@@ -272,7 +276,6 @@ def log_shares_activity(team_id: int, trdAction:str, ticker: str, shares_added: 
 
 
 def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str, expiration, strike: float, contracts_added: float, price: float, realized_pl=0):
-    action = "BOUGHT" if contracts_added > 0 else "SOLD"
     color = "#65FE08" if contracts_added > 0 else "red"
     sign = "+" if contracts_added > 0 else ""
 
@@ -284,7 +287,7 @@ def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str
     exp_str = expiration if isinstance(expiration, str) else expiration.strftime("%Y-%m-%d")
 
     msg = (
-        f"<b style='color:{color};'>{action} {sign}{contracts_added} contract(s)</b> of "
+        f"<b style='color:{color};'>{trdAction} {sign}{contracts_added} contract(s)</b> of "
         f"<b style='color:#FFD700;'> {symbol} {strike:.2f} {call_put} {exp_str}</b> "
         f"at <b>\${price:,.2f}</b> "
         f"(Total: <b style='color:{colorNet};'>{signNet}\${abs(total_cost):,.2f}</b>) "
@@ -676,7 +679,8 @@ def show_team_portfolio():
                 fit_columns_on_grid_load=True
             )
             selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
-
+        else:
+            st.info("No existing option positions.")
         # 🔹 If no existing position is selected, allow the user to enter a new symbol
         selected_symbol = st.text_input("Symbol for Chain (e.g. SPY)", key="chain_symbol").upper()
 
@@ -727,6 +731,10 @@ def show_team_portfolio():
                     with col_calls:
                         st.markdown("#### Calls")
                         gb_calls = GridOptionsBuilder.from_dataframe(df_calls)
+                        gb_calls.configure_default_column(
+                            resizable=True, autoWidth=True, wrapText=True
+                        )
+
                         gb_calls.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
                         grid_options_calls = gb_calls.build()
                         grid_response_calls = AgGrid(
@@ -741,6 +749,9 @@ def show_team_portfolio():
                     with col_puts:
                         st.markdown("#### Puts")
                         gb_puts = GridOptionsBuilder.from_dataframe(df_puts)
+                        gb_puts.configure_default_column(
+                            resizable=True, autoWidth=True, wrapText=True
+                        )
                         gb_puts.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
                         grid_options_puts = gb_puts.build()
                         grid_response_puts = AgGrid(
@@ -762,12 +773,12 @@ def show_team_portfolio():
             for idx, leg in selected_legs.iterrows():
                 with st.container():
                     col1, col2, col3, col4 = st.columns(4)
-                    col1.subheader(f"""**{leg['Symbol']} {leg['Strike']} {leg['Type']}**\n  \n {"**{leg['Bid']}B - {leg['Ask']}A**" if
+                    col1.subheader(f"""**{leg['Symbol']} {leg['Strike']} {leg['Type']}**\n  \n {f"**{leg['Bid']}B - {leg['Ask']}A**" if
                                     'Bid' in leg and 'Ask' in leg else leg['avg_cost']}""")
 
                     action = col2.selectbox("Action", options=["Buy", "Sell"], key=f"action_{idx}")
                     qty = col3.number_input("Contracts", value=abs(leg.get("contracts_held", 1)), min_value=1, step=1, key=f"qty_{idx}")
-                    fill_price = col4.number_input("Fill Price", value=fetch_option_price(leg["Symbol"], leg["Expiration"], leg["Strike"], leg["Type"], is_buy=(action == "Buy")), key=f"price_{idx}")
+                    fill_price = col4.number_input("Estimated Fill Price",value=fetch_option_price(leg["Symbol"], leg["Expiration"], leg["Strike"], leg["Type"], is_buy=(action == "Buy")),  disabled=True, key=f"price_{idx}")
 
                     trade_details.append({
                         "Type": leg["Type"],
@@ -779,121 +790,123 @@ def show_team_portfolio():
                         "Expiration": leg["Expiration"]
                     })
 
-        # Step 3: Execute Trade
-        if st.button("Execute Trade") and trade_details:
-            if all(detail["Qty"] == 0 for detail in trade_details):
-                st.warning("Please specify a nonzero quantity for at least one leg.")
-            else:
-                closing_positions = []
-                opening_positions = []
+            # Step 3: Execute Trade
+            if st.button("Execute Trade") and trade_details:
+                if all(detail["Qty"] == 0 for detail in trade_details):
+                    st.warning("Please specify a nonzero quantity for at least one leg.")
+                else:
+                    closing_positions = []
+                    opening_positions = []
 
-                opts_df = load_options(st.session_state["team_id"])
+                    opts_df = load_options(st.session_state["team_id"])
 
-                for detail in trade_details:
-                    existing = pd.DataFrame() if opts_df.empty else opts_df[
-                        (opts_df["symbol"] == detail['Symbol'].upper()) &
-                        (opts_df["call_put"] == detail["Type"]) &
-                        (opts_df["strike"] == detail["Strike"]) &
-                        (opts_df["expiration"] == detail['Expiration'])
-                    ]
+                    for detail in trade_details:
+                        existing = pd.DataFrame() if opts_df.empty else opts_df[
+                            (opts_df["symbol"] == detail['Symbol'].upper()) &
+                            (opts_df["call_put"] == detail["Type"]) &
+                            (opts_df["strike"] == detail["Strike"]) &
+                            (opts_df["expiration"] == detail['Expiration'])
+                        ]
 
-                    old_contracts = 0.0
-                    old_avg = 0.0
-                    opt_id = None
+                        old_contracts = 0.0
+                        old_avg = 0.0
+                        opt_id = None
 
-                    if not existing.empty:
+                        if not existing.empty:
+                            old_contracts = float(existing["contracts_held"].iloc[0])
+                            old_avg = float(existing["avg_cost"].iloc[0])
+                            opt_id = existing["id"].iloc[0]
+
+                        trade_qty = detail["Qty"]
+                        fill_price = detail["Fill Price"]
+                        action = detail["Action"]
+
+                        # ✅ Determine if this is a closing or opening trade
+                        if action == "Buy":
+                            if old_contracts < 0:
+                                closing_positions.append(detail)
+                            else:
+                                opening_positions.append(detail)
+
+                        elif action == "Sell":
+                            detail["Qty"] = -detail["Qty"]
+                            if old_contracts > 0:
+                                closing_positions.append(detail)
+                            else:
+                                opening_positions.append(detail)
+
+                    # 🚨 Ensure New Trades Are Debit Only
+                    total_opening_cost = sum(d["Fill Price"] * d["Qty"] * 100 for d in opening_positions)
+                    total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
+                    st.write(total_closing_credit, total_opening_cost)
+                    if total_closing_credit > total_opening_cost:
+                        st.error("You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
+                        st.stop()
+
+                    # ✅ Process Opening Trades
+                    for detail in opening_positions:
+                        existing = pd.DataFrame() if opts_df.empty else opts_df[
+                            (opts_df["symbol"] == detail['Symbol'].upper()) &
+                            (opts_df["call_put"] == detail["Type"]) &
+                            (opts_df["strike"] == detail["Strike"]) &
+                            (opts_df["expiration"] == detail['Expiration'])
+                        ]
+
+                        old_contracts = float(existing["contracts_held"].iloc[0]) if not existing.empty else 0.0
+                        old_avg = float(existing["avg_cost"].iloc[0]) if not existing.empty else 0.0
+                        opt_id = existing["id"].iloc[0] if not existing.empty else None
+
+                        trade_qty = detail["Qty"]
+                        st.write(trade_qty)
+                        fill_price = fetch_option_price(detail["Symbol"], detail["Expiration"], detail["Strike"], detail["Type"], is_buy= True if trade_qty > 0 else False)
+
+                        new_total = old_contracts + trade_qty
+                        new_avg = ((old_contracts * old_avg) + (trade_qty * fill_price)) / new_total if new_total != 0 else fill_price
+
+                        upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], new_total, new_avg, fill_price)
+                        log_options_activity(st.session_state["team_id"], tradeAction.BTO if trade_qty > 0 else tradeAction.STO, detail['Symbol'], detail["Type"],
+                                            detail['Expiration'], detail["Strike"], trade_qty, fill_price, realized_pl=0)
+
+                    # ✅ Process Closing Trades
+                    for detail in closing_positions:
+                        existing = opts_df[
+                            (opts_df["symbol"] == detail['Symbol'].upper()) &
+                            (opts_df["call_put"] == detail["Type"]) &
+                            (opts_df["strike"] == detail["Strike"]) &
+                            (opts_df["expiration"] == detail['Expiration'])
+                        ]
+
+                        if existing.empty:
+                            st.error(f"Cannot close {detail['Qty']} contracts of {detail['Type']} {detail['Strike']} - No existing position.")
+                            st.stop()
+
                         old_contracts = float(existing["contracts_held"].iloc[0])
                         old_avg = float(existing["avg_cost"].iloc[0])
                         opt_id = existing["id"].iloc[0]
 
-                    trade_qty = detail["Qty"]
-                    fill_price = detail["Fill Price"]
-                    action = detail["Action"]
+                        trade_qty = detail["Qty"]
+                        fill_price =  fetch_option_price(detail["Symbol"], detail["Expiration"], detail["Strike"], detail["Type"], is_buy= True if trade_qty > 0 else False)
 
-                    # ✅ Determine if this is a closing or opening trade
-                    if action == "Buy":
-                        if old_contracts < 0:
-                            closing_positions.append(detail)
+                        if abs(trade_qty) > abs(old_contracts):
+                            #this should also prevent the whole closing just one side and turn that into a new position
+                            st.error(f"Cannot close more contracts than you own: {abs(old_contracts)} available.")
+                            st.stop()
+
+                        realized = (fill_price - old_avg) * trade_qty * 100 if old_contracts > 0 else (old_avg - fill_price) * trade_qty * 100
+                        leftover = old_contracts - trade_qty
+
+                        if leftover == 0:
+                            delete_option_by_id(opt_id)
+                            log_options_activity(st.session_state["team_id"], tradeAction.CLOSE, detail['Symbol'], detail["Type"],
+                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
                         else:
-                            opening_positions.append(detail)
+                            upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], leftover, old_avg, fill_price)
+                            log_options_activity(st.session_state["team_id"], tradeAction.SELL, detail['Symbol'], detail["Type"],
+                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
 
-                    elif action == "Sell":
-                        detail["Qty"] = -detail["Qty"]
-                        if old_contracts > 0:
-                            closing_positions.append(detail)
-                        else:
-                            opening_positions.append(detail)
-
-                # 🚨 Ensure New Trades Are Debit Only
-                total_opening_cost = sum(d["Fill Price"] * d["Qty"] * 100 for d in opening_positions)
-                total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
-                st.write(total_closing_credit, total_opening_cost)
-                if total_closing_credit > total_opening_cost:
-                    st.error("You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
-                    st.stop()
-
-                # ✅ Process Opening Trades
-                for detail in opening_positions:
-                    existing = pd.DataFrame() if opts_df.empty else opts_df[
-                        (opts_df["symbol"] == detail['Symbol'].upper()) &
-                        (opts_df["call_put"] == detail["Type"]) &
-                        (opts_df["strike"] == detail["Strike"]) &
-                        (opts_df["expiration"] == detail['Expiration'])
-                    ]
-
-                    old_contracts = float(existing["contracts_held"].iloc[0]) if not existing.empty else 0.0
-                    old_avg = float(existing["avg_cost"].iloc[0]) if not existing.empty else 0.0
-                    opt_id = existing["id"].iloc[0] if not existing.empty else None
-
-                    trade_qty = detail["Qty"]
-                    fill_price = detail["Fill Price"]
-
-                    new_total = old_contracts + trade_qty
-                    new_avg = ((old_contracts * old_avg) + (trade_qty * fill_price)) / new_total if new_total != 0 else fill_price
-
-                    upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], new_total, new_avg, fill_price)
-                    log_options_activity(st.session_state["team_id"], tradeAction.BUY, detail['Symbol'], detail["Type"],
-                                        detail['Expiration'], detail["Strike"], trade_qty, fill_price, realized_pl=0)
-
-                # ✅ Process Closing Trades
-                for detail in closing_positions:
-                    existing = opts_df[
-                        (opts_df["symbol"] == detail['Symbol'].upper()) &
-                        (opts_df["call_put"] == detail["Type"]) &
-                        (opts_df["strike"] == detail["Strike"]) &
-                        (opts_df["expiration"] == detail['Expiration'])
-                    ]
-
-                    if existing.empty:
-                        st.error(f"Cannot close {detail['Qty']} contracts of {detail['Type']} {detail['Strike']} - No existing position.")
-                        st.stop()
-
-                    old_contracts = float(existing["contracts_held"].iloc[0])
-                    old_avg = float(existing["avg_cost"].iloc[0])
-                    opt_id = existing["id"].iloc[0]
-
-                    trade_qty = detail["Qty"]
-                    fill_price = detail["Fill Price"]
-
-                    if abs(trade_qty) > abs(old_contracts):
-                        st.error(f"Cannot close more contracts than you own: {abs(old_contracts)} available.")
-                        st.stop()
-
-                    realized = (fill_price - old_avg) * trade_qty * 100 if old_contracts > 0 else (old_avg - fill_price) * trade_qty * 100
-                    leftover = old_contracts - trade_qty
-
-                    if leftover == 0:
-                        delete_option_by_id(opt_id)
-                        log_options_activity(st.session_state["team_id"], tradeAction.CLOSE, detail['Symbol'], detail["Type"],
-                                            detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
-                    else:
-                        upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], leftover, old_avg, fill_price)
-                        log_options_activity(st.session_state["team_id"], tradeAction.SELL, detail['Symbol'], detail["Type"],
-                                            detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
-
-                st.success("Trade executed successfully.")
-                calculate_and_record_performance(st.session_state["team_id"])
-                st.rerun()
+                    st.success("Trade executed successfully.")
+                    calculate_and_record_performance(st.session_state["team_id"])
+                    st.rerun()
 
 
     with tab_log:
