@@ -14,7 +14,7 @@ install_latest_yfinance()
 import pytz
 import time
 import random
-import datetime
+from datetime import datetime, time
 import pandas as pd
 import yfinance as yf
 import cloudscraper
@@ -179,7 +179,6 @@ def get_options_chain(symbol: str):
          }
        }
     """
-    time.sleep(1)
     full_url = f"{baseURL}?stock={symbol.upper()}&reqId={random.randint(1, 1000000)}"
     scraper = cloudscraper.create_scraper()
     response = scraper.get(full_url)
@@ -235,12 +234,31 @@ def fetch_option_price(symbol: str, expiration: str, strike: float, call_put: st
 # -----------------------------------------------------------------------------
 # Activity Logging with Pytz
 # -----------------------------------------------------------------------------
-def get_est_time():
-    """Return EST/NY time string."""
-    tz = pytz.timezone("America/New_York")
-    now_est = datetime.datetime.now(tz)
+def get_est_time() -> str:
+    """
+    Returns the current time in Eastern Standard Time (EST) as a formatted string.
+    
+    Returns:
+        str: Current EST/NY time in the format "MM/DD/YYYY HH:MM AM/PM".
+    """
+    est = pytz.timezone("America/New_York")
+    now_est = datetime.now(est)
     return now_est.strftime("%m/%d/%Y %I:%M %p")
 
+def isMarketHours() -> bool:
+    """
+    Checks if the current time is within U.S. stock market hours (9:30 AM - 4:15 PM EST).
+    
+    Returns:
+        bool: True if within market hours, False otherwise.
+    """
+    est = pytz.timezone("America/New_York")
+    now = datetime.now(est).time()
+    
+    market_open = time(9, 30)
+    market_close = time(16, 15)
+
+    return market_open <= now <= market_close
 
 def log_shares_activity(team_id: int, trdAction:str, ticker: str, shares_added: float, price: float, realized_pl=0):
     action = "BOUGHT" if shares_added > 0 else "SOLD"
@@ -791,7 +809,7 @@ def show_team_portfolio():
                     })
 
             # Step 3: Execute Trade
-            if st.button("Execute Trade") and trade_details:
+            if st.button("Execute Trade") and trade_details and isMarketHours():
                 if all(detail["Qty"] == 0 for detail in trade_details):
                     st.warning("Please specify a nonzero quantity for at least one leg.")
                 else:
@@ -907,7 +925,8 @@ def show_team_portfolio():
                     st.success("Trade executed successfully.")
                     calculate_and_record_performance(st.session_state["team_id"])
                     st.rerun()
-
+            elif not isMarketHours():
+                st.error('OUTSIDE MARKET HOURS')
 
     with tab_log:
         st.subheader("Activity Log")
