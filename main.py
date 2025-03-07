@@ -854,13 +854,14 @@ def show_team_portfolio():
                                 detail["Qty"] = -detail["Qty"]
                                 opening_positions.append(detail)
 
-                    # 🚨 Ensure New Trades Are Debit Only
-                    total_opening_cost = sum(d["Fill Price"] * d["Qty"] * 100 for d in opening_positions)
-                    total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
-                    st.write(total_closing_credit, total_opening_cost)
-                    if total_closing_credit > total_opening_cost:
-                        st.error("You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
-                        st.stop()
+                    # 🚨 Ensure New Trades Are Debit Only only if there are opening positions
+                    if opening_positions:
+                        total_opening_cost = sum(d["Fill Price"] * d["Qty"] * 100 for d in opening_positions)
+                        total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
+                        # st.write(total_closing_credit, total_opening_cost)
+                        if total_closing_credit > total_opening_cost:
+                            st.error("You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
+                            st.stop()
 
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
