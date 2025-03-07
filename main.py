@@ -396,7 +396,10 @@ def compute_portfolio_stats(team_id):
     team = get_team_info(team_id)
     original_cap = float(team["initial_capital"])
     restricted_cap = float(team["restricted_capital"])
-    free_pool = original_cap - restricted_cap
+    
+    activity_df = load_activity(team_id)
+    realized_pl = activity_df["realized_pl"].sum() if not activity_df.empty else 0.0
+    free_pool = original_cap + realized_pl - restricted_cap
 
     spent_shares = (shares_df["shares_held"] * shares_df["avg_cost"]).sum() if not shares_df.empty else 0.0
     spent_opts = (opts_df["contracts_held"] * 100 * opts_df["avg_cost"]).sum() if not opts_df.empty else 0.0
@@ -404,8 +407,7 @@ def compute_portfolio_stats(team_id):
     free_cash = free_pool - used_invest
 
     # PnL Calculation
-    realized_pl = load_activity(team_id)["realized_pl"].sum() if not load_activity(team_id).empty else 0.0
-    unrealized_pl = sum_opts_val + sum_shares_val - used_invest
+    unrealized_pl = (sum_opts_val + sum_shares_val) - used_invest
     total_pnl = realized_pl + unrealized_pl
 
     # Total Portfolio Value
