@@ -6,10 +6,10 @@ try:
 except:
     pass
 @st.cache_resource
-def install_latest_yfinance():
+def connectingToStockData():
     subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yfinance"], check=True)
 
-install_latest_yfinance()
+connectingToStockData()
 
 import pytz
 import time
@@ -426,7 +426,7 @@ def compute_portfolio_stats(team_id):
 def calculate_and_record_performance(team_id):
     """Update the performance table based on computed portfolio values."""
     stats = compute_portfolio_stats(team_id)
-    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    today_str = datetime.today().strftime("%Y-%m-%d")
 
     supabase.table("performance").upsert({
         "team_id": int(team_id),
