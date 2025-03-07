@@ -847,10 +847,11 @@ def show_team_portfolio():
                                 opening_positions.append(detail)
 
                         elif action == "Sell":
-                            detail["Qty"] = -detail["Qty"]
+                            
                             if old_contracts > 0:
                                 closing_positions.append(detail)
                             else:
+                                detail["Qty"] = -detail["Qty"]
                                 opening_positions.append(detail)
 
                     # 🚨 Ensure New Trades Are Debit Only
