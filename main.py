@@ -26,6 +26,12 @@ from supabase import create_client, Client
 # Streamlit / Supabase Setup
 # -----------------------------------------------------------------------------
 
+import extra_streamlit_components as stx
+
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
 
 class tradeAction:
     BUY = "BOUGHT"
@@ -445,13 +451,20 @@ def calculate_and_record_performance(team_id):
 # Main Streamlit
 # -----------------------------------------------------------------------------
 def main():
-    if not st.session_state["logged_in"]:
-        show_login_screen()
+    # always load login whenver it's refreshed
+    if "logged_in" not in st.session_state:
+        if cookie_manager.get("logged_in") == "true":
+            st.session_state["logged_in"] = True
+            st.session_state["is_admin"] = cookie_manager.get("is_admin") == "true"
+            st.session_state["team_id"] = int(cookie_manager.get("team_id") or -1)
+        else:
+            show_login_screen()
     else:
         if st.session_state["is_admin"]:
             show_admin_panel()
         else:
             show_team_portfolio()
+
 
 def show_login_screen():
     st.title("Zak Fund")
@@ -460,19 +473,23 @@ def show_login_screen():
         if pwd == ADMIN_PASSWORD:
             st.session_state["logged_in"] = True
             st.session_state["is_admin"] = True
+            cookie_manager.set("logged_in", "true")
+            cookie_manager.set("is_admin", "true")
             st.rerun()
         else:
-            # check if team password
             team_row = get_team_by_password(pwd)
             if team_row:
                 st.session_state["logged_in"] = True
                 st.session_state["is_admin"] = False
                 st.session_state["team_id"] = team_row["id"]
-                # Auto-refresh prices once
+                cookie_manager.set("logged_in", "true")
+                cookie_manager.set("is_admin", "false")
+                cookie_manager.set("team_id", str(team_row["id"]))
                 refresh_portfolio_prices(team_row["id"])
                 st.rerun()
             else:
                 st.error("Invalid password!")
+
 
 def show_admin_panel():
     st.title("Admin Panel")
@@ -547,6 +564,7 @@ def show_admin_panel():
         })
     df_admin = pd.DataFrame(rows)
     st.dataframe(df_admin, use_container_width=True)
+
 def show_team_portfolio():
     team_id = st.session_state["team_id"]
     team = get_team_info(team_id)
@@ -554,9 +572,11 @@ def show_team_portfolio():
         st.error("Team not found.")
         return
 
-    if st.button("Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["team_id"] = None
+    if st.sidebar.button("Logout"):
+        st.session_state.clear()
+        cookie_manager.delete("logged_in")
+        cookie_manager.delete("is_admin")
+        cookie_manager.delete("team_id")
         st.rerun()
 
     st.title(f"Team: {team['team_name']}")
