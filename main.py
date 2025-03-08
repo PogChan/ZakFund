@@ -8,11 +8,12 @@ except:
 @st.cache_resource
 def connectingToStockData():
     subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yfinance"], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "streamlit-cookies-manager"], check=True)
 
 connectingToStockData()
 
 import pytz
-import time
+import time as tm
 import random
 from datetime import datetime, time
 import pandas as pd
@@ -21,17 +22,20 @@ import cloudscraper
 import altair as alt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from supabase import create_client, Client
+from streamlit_cookies_manager import EncryptedCookieManager
+
+cookiesPass = st.secrets["COOKIES_PASSWORD"]
+cookies = EncryptedCookieManager(
+    prefix="zakfund/",
+    password=cookiesPass,
+)
+
+if not cookies.ready():
+    st.stop()
 
 # -----------------------------------------------------------------------------
 # Streamlit / Supabase Setup
 # -----------------------------------------------------------------------------
-
-import extra_streamlit_components as stx
-
-def get_cookie_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_cookie_manager()
 
 class tradeAction:
     BUY = "BOUGHT"
@@ -49,13 +53,6 @@ ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
 baseURL = st.secrets["BASEAPI"]  # For fetching option chain data
 
 supabase: Client = create_client(url, key)
-
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-if "is_admin" not in st.session_state:
-    st.session_state["is_admin"] = False
-if "team_id" not in st.session_state:
-    st.session_state["team_id"] = None
 
 # For storing multi-leg/spread picks
 if "spread_legs" not in st.session_state:
@@ -243,7 +240,7 @@ def fetch_option_price(symbol: str, expiration: str, strike: float, call_put: st
 def get_est_time() -> str:
     """
     Returns the current time in Eastern Standard Time (EST) as a formatted string.
-    
+
     Returns:
         str: Current EST/NY time in the format "MM/DD/YYYY HH:MM AM/PM".
     """
@@ -254,13 +251,13 @@ def get_est_time() -> str:
 def isMarketHours() -> bool:
     """
     Checks if the current time is within U.S. stock market hours (9:30 AM - 4:15 PM EST).
-    
+
     Returns:
         bool: True if within market hours, False otherwise.
     """
     est = pytz.timezone("America/New_York")
     now = datetime.now(est).time()
-    
+
     market_open = time(9, 30)
     market_close = time(16, 15)
 
@@ -402,7 +399,7 @@ def compute_portfolio_stats(team_id):
     team = get_team_info(team_id)
     original_cap = float(team["initial_capital"])
     restricted_cap = float(team["restricted_capital"])
-    
+
     activity_df = load_activity(team_id)
     realized_pl = activity_df["realized_pl"].sum() if not activity_df.empty else 0.0
     free_pool = original_cap + realized_pl - restricted_cap
@@ -451,30 +448,50 @@ def calculate_and_record_performance(team_id):
 # Main Streamlit
 # -----------------------------------------------------------------------------
 def main():
-    # always load login whenver it's refreshed
-    if "logged_in" not in st.session_state:
-        if cookie_manager.get("logged_in") == "true":
-            st.session_state["logged_in"] = True
-            st.session_state["is_admin"] = cookie_manager.get("is_admin") == "true"
-            st.session_state["team_id"] = int(cookie_manager.get("team_id") or -1)
-        else:
-            show_login_screen()
+    # Synchronize session state with cookies
+    st.session_state["logged_in"] = cookies.get("logged_in", "false") == "true"
+    st.session_state["is_admin"] = cookies.get("is_admin", "false") == "true"
+    st.session_state["team_id"] = int(cookies.get("team_id", '-1'))
+
+    # Authentication logic
+    if not st.session_state["logged_in"]:
+        show_login_screen()
     else:
+        if st.button("Logout"):
+            # Clear session state
+            st.session_state.clear()
+
+            # **Explicitly remove cookies by setting them to empty strings**
+            cookies["logged_in"] = "false"
+            cookies["is_admin"] = "false"
+            cookies["team_id"] = '-1'
+            cookies.save()
+
+            st.success("Logged out.")
+
+            tm.sleep(1)
+
+            st.rerun()
+
         if st.session_state["is_admin"]:
             show_admin_panel()
         else:
             show_team_portfolio()
 
-
 def show_login_screen():
     st.title("Zak Fund")
     pwd = st.text_input("Enter Team Password or Admin Password:", type="password")
+
     if st.button("Login"):
         if pwd == ADMIN_PASSWORD:
             st.session_state["logged_in"] = True
             st.session_state["is_admin"] = True
-            cookie_manager.set("logged_in", "true")
-            cookie_manager.set("is_admin", "true")
+
+            # Store values as strings in cookies
+            cookies["logged_in"] = "true"
+            cookies["is_admin"] = "true"
+            cookies.save()
+
             st.rerun()
         else:
             team_row = get_team_by_password(pwd)
@@ -482,22 +499,23 @@ def show_login_screen():
                 st.session_state["logged_in"] = True
                 st.session_state["is_admin"] = False
                 st.session_state["team_id"] = team_row["id"]
-                cookie_manager.set("logged_in", "true")
-                cookie_manager.set("is_admin", "false")
-                cookie_manager.set("team_id", str(team_row["id"]))
+
+                # Store values as strings in cookies
+                cookies["logged_in"] = "true"
+                cookies["is_admin"] = "false"
+                cookies["team_id"] = str(team_row["id"])
+                cookies.save()
+
                 refresh_portfolio_prices(team_row["id"])
                 st.rerun()
             else:
                 st.error("Invalid password!")
 
 
+
 def show_admin_panel():
     st.title("Admin Panel")
-    if st.button("Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["is_admin"] = False
-        st.session_state["team_id"] = None
-        st.rerun()
+
 
     st.subheader("Create / Edit Teams")
     teams_resp = supabase.table("teams").select("*").execute()
@@ -572,12 +590,7 @@ def show_team_portfolio():
         st.error("Team not found.")
         return
 
-    if st.sidebar.button("Logout"):
-        st.session_state.clear()
-        cookie_manager.delete("logged_in")
-        cookie_manager.delete("is_admin")
-        cookie_manager.delete("team_id")
-        st.rerun()
+
 
     st.title(f"Team: {team['team_name']}")
 
@@ -869,7 +882,6 @@ def show_team_portfolio():
                                 opening_positions.append(detail)
 
                         elif action == "Sell":
-                            
                             if old_contracts > 0:
                                 closing_positions.append(detail)
                             else:
