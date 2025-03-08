@@ -451,32 +451,32 @@ def main():
     # Synchronize session state with cookies
     st.session_state["logged_in"] = cookies.get("logged_in", "false") == "true"
     st.session_state["is_admin"] = cookies.get("is_admin", "false") == "true"
-    st.session_state["team_id"] = int(cookies.get("team_id", '-1'))
+    st.session_state["team_id"] = int(cookies.get("team_id", None))
 
     # Authentication logic
     if not st.session_state["logged_in"]:
         show_login_screen()
     else:
         if st.button("Logout"):
-            # Clear session state
-            st.session_state.clear()
-
-            # **Explicitly remove cookies by setting them to empty strings**
-            cookies["logged_in"] = "false"
-            cookies["is_admin"] = "false"
-            cookies["team_id"] = '-1'
-            cookies.save()
-
-            st.success("Logged out.")
-
-            tm.sleep(1)
-
-            st.rerun()
-
+            handle_logout()
         if st.session_state["is_admin"]:
             show_admin_panel()
         else:
             show_team_portfolio()
+
+def handle_logout():
+    # Clear session state
+    st.session_state.clear()
+
+    # **Explicitly remove cookies by setting them to empty strings**
+    cookies["logged_in"] = "false"
+    cookies["is_admin"] = "false"
+    cookies["team_id"] = '-1'
+    cookies.save()
+
+    st.success("Logged out.")
+    tm.sleep(1)
+    st.rerun()
 
 def show_login_screen():
     st.title("Zak Fund")
@@ -505,8 +505,8 @@ def show_login_screen():
                 cookies["is_admin"] = "false"
                 cookies["team_id"] = str(team_row["id"])
                 cookies.save()
-
                 refresh_portfolio_prices(team_row["id"])
+
                 st.rerun()
             else:
                 st.error("Invalid password!")
@@ -564,23 +564,18 @@ def show_admin_panel():
     for t in teams_list:
         tid = t["id"]
         # Refresh current data from DB
+        refresh_portfolio_prices(tid)
         port_stat = compute_portfolio_stats(tid)
-        shares_df = port_stat["shares_df"]
-        opts_df = port_stat["opts_df"]
-        sum_shares_val = port_stat["sum_shares_val"]
-        sum_opts_val = port_stat["sum_opts_val"]
-
-        free_pool = float(t["initial_capital"]) - float(t["restricted_capital"])
-        free_cash = port_stat["free_cash"]
-        total_val = port_stat["total_val"]
 
         rows.append({
-            "Team": t["team_name"],
-            "Initial Cap": t["initial_capital"],
-            "Restricted": t["restricted_capital"],
-            "Portfolio Value": total_val
-        })
+                "Team": t["team_name"],
+                "Initial Cap": round(t["initial_capital"], 2),
+                "Restricted": round(t["restricted_capital"], 2),
+                "Portfolio Value": round(port_stat["total_val"], 2),
+                "PnL": round(port_stat["total_pnl"], 2),
+            })
     df_admin = pd.DataFrame(rows)
+
     st.dataframe(df_admin, use_container_width=True)
 
 def show_team_portfolio():
