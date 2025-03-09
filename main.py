@@ -23,12 +23,15 @@ import altair as alt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from supabase import create_client, Client
 from streamlit_cookies_manager import EncryptedCookieManager
+from streamlit_javascript import st_javascript
+
 
 cookiesPass = st.secrets["COOKIES_PASSWORD"]
 cookies = EncryptedCookieManager(
     prefix="zakfund/",
     password=cookiesPass,
 )
+
 
 if not cookies.ready():
     st.stop()
@@ -447,7 +450,17 @@ def calculate_and_record_performance(team_id):
 # -----------------------------------------------------------------------------
 # Main Streamlit
 # -----------------------------------------------------------------------------
+
 def main():
+    if "user_tz" not in cookies or not cookies["user_tz"]:
+        tz_js = st_javascript("Intl.DateTimeFormat().resolvedOptions().timeZone")
+        if tz_js:
+            st.session_state["user_tz"] = tz_js
+            cookies["user_tz"] = tz_js
+            cookies.save()
+    else:
+        st.session_state["user_tz"] = cookies["user_tz"]
+
     # Synchronize session state with cookies
     st.session_state["logged_in"] = cookies.get("logged_in", "false") == "true"
     st.session_state["is_admin"] = cookies.get("is_admin", "false") == "true"
@@ -463,6 +476,7 @@ def main():
             show_admin_panel()
         else:
             show_team_portfolio()
+
 
 def handle_logout():
     # Clear session state
@@ -737,7 +751,18 @@ def show_team_portfolio():
         # 🔹 User selects one or multiple existing positions for closing (supports spreads)
         if not existing_opts.empty:
             existing_opts.rename(columns={'symbol': 'Symbol', 'expiration': 'Expiration', 'strike': 'Strike', 'call_put': 'Type',
+                                          'contracts_held': 'Qty', 'avg_cost': 'Avg Cost', 'current_price': 'Current Price', 'unrealized_pl': 'PnL',
+                                          'created_at': 'Bought On', 'updated_at': 'Last Updated'
                                         }, inplace=True)
+
+            user_tz = pytz.timezone(st.session_state.get("user_tz", "America/New_York"))
+
+            existing_opts["Bought On"] = pd.to_datetime(existing_opts["Bought On"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
+            existing_opts["Last Updated"] = pd.to_datetime(existing_opts["Last Updated"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
+
+            existing_opts["PnL"] = (existing_opts["PnL"] / existing_opts["Avg Cost"]).round(0).astype(int).astype(str) + "%"
+
+
             st.markdown("#### Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
             gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
@@ -752,6 +777,9 @@ def show_team_portfolio():
             selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
         else:
             st.info("No existing option positions.")
+
+        st.write("Selected Existing Positions:")
+        st.write(selected_existing)
         # 🔹 If no existing position is selected, allow the user to enter a new symbol
         selected_symbol = st.text_input("Symbol for Chain (e.g. SPY)", key="chain_symbol").upper()
 
@@ -818,7 +846,8 @@ def show_team_portfolio():
                             gridOptions=grid_options_calls,
                             update_mode=GridUpdateMode.SELECTION_CHANGED,
                             height=250,
-                            fit_columns_on_grid_load=True
+                            fit_columns_on_grid_load=True,
+                            key='calls'
                         )
                         selected_calls = pd.DataFrame(grid_response_calls.get("selected_rows", []))
 
@@ -831,7 +860,8 @@ def show_team_portfolio():
                             gridOptions=grid_options_puts,
                             update_mode=GridUpdateMode.SELECTION_CHANGED,
                             height=250,
-                            fit_columns_on_grid_load=True
+                            fit_columns_on_grid_load=True,
+                            key='puts'
                         )
                         selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
         # Step 2: Trade Details Input
