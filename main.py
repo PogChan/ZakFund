@@ -713,13 +713,14 @@ def show_team_portfolio():
                 st.rerun()
 
 
-    def clearAggrids():
-        clear_selection_js = JsCode("""
+    clear_selection_js = JsCode("""
         function() {
             const api = this.api;
             api.deselectAll();
         }
         """)
+
+    def clearAggrids():
         st.components.v1.html(f"""
             <script>
             const iframe = parent.document.querySelector('iframe[title="exist_opts"]');
@@ -760,7 +761,8 @@ def show_team_portfolio():
 
             st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
-            gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
+            gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=[])
+            gb_exist.configure_grid_options(onFirstDataRendered=clear_selection_js)
             grid_options_exist = gb_exist.build()
             grid_response_exist = AgGrid(
                 existing_opts,
@@ -768,11 +770,15 @@ def show_team_portfolio():
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 height=250,
                 fit_columns_on_grid_load=True,
-                key='exist_opts'
+                key='exist_opts',
+                allow_unsafe_jscode=True
             )
+            clearAggrids()
+
             selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
         else:
             st.info("No existing option positions.")
+
 
         # 🔹 If no existing position is selected, allow the user to enter a new symbol
         selected_symbol = st.text_input("### 🎫 Symbol for Chain (e.g. SPY)", key="chain_symbol").upper()
@@ -904,91 +910,91 @@ def show_team_portfolio():
                         "Expiration": leg["Expiration"]
                     })
 
-            if 'trade_stage' not in st.session_state:
-                st.session_state.trade_stage = 0
-            if 'opening_positions' not in st.session_state:
-                st.session_state.opening_positions = []
-            if 'closing_positions' not in st.session_state:
-                st.session_state.closing_positions = []
 
 
-            # Step 3: Execute Trade
-            if st.session_state.trade_stage == 0:
-                # if isMarketHours() and trade_details and  st.button("Execute Trade", on_click=reviewTrade):
-                if trade_details and st.button("🔮 Review Trade"):
-                    # Save in session state to persist after rerun
-                    closing_positions = []
-                    opening_positions = []
-                    if all(detail["Qty"] == 0 for detail in trade_details):
-                        st.warning("⚠️ Please specify a nonzero quantity for at least one leg.")
-                    else:
+            # if isMarketHours() and trade_details and  st.button("Execute Trade", on_click=reviewTrade):
+            if trade_details:
+                # Save in session state to persist after rerun
+                closing_positions = []
+                opening_positions = []
+                if all(detail["Qty"] == 0 for detail in trade_details):
+                    st.warning("⚠️ Please specify a nonzero quantity for at least one leg.")
+                else:
 
 
-                        opts_df = load_options(st.session_state["team_id"])
+                    opts_df = load_options(st.session_state["team_id"])
 
-                        for detail in trade_details:
-                            existing = pd.DataFrame() if opts_df.empty else opts_df[
-                                (opts_df["symbol"] == detail['Symbol'].upper()) &
-                                (opts_df["call_put"] == detail["Type"]) &
-                                (opts_df["strike"] == detail["Strike"]) &
-                                (opts_df["expiration"] == detail['Expiration'])
-                            ]
+                    for detail in trade_details:
+                        existing = pd.DataFrame() if opts_df.empty else opts_df[
+                            (opts_df["symbol"] == detail['Symbol'].upper()) &
+                            (opts_df["call_put"] == detail["Type"]) &
+                            (opts_df["strike"] == detail["Strike"]) &
+                            (opts_df["expiration"] == detail['Expiration'])
+                        ]
 
-                            old_contracts = 0.0
-                            old_avg = 0.0
-                            opt_id = None
+                        old_contracts = 0.0
+                        old_avg = 0.0
+                        opt_id = None
 
-                            if not existing.empty:
-                                old_contracts = float(existing["contracts_held"].iloc[0])
-                                old_avg = float(existing["avg_cost"].iloc[0])
-                                opt_id = existing["id"].iloc[0]
+                        if not existing.empty:
+                            old_contracts = float(existing["contracts_held"].iloc[0])
+                            old_avg = float(existing["avg_cost"].iloc[0])
+                            opt_id = existing["id"].iloc[0]
 
-                            trade_qty = detail["Qty"]
-                            fill_price = detail["Fill Price"]
-                            action = detail["Action"]
+                        trade_qty = detail["Qty"]
+                        fill_price = detail["Fill Price"]
+                        action = detail["Action"]
 
-                            # ✅ Determine if this is a closing or opening trade
-                            if action == "🟢 Buy":
-                                if old_contracts < 0:
-                                    closing_positions.append(detail)
-                                else:
-                                    opening_positions.append(detail)
+                        # ✅ Determine if this is a closing or opening trade
+                        if action == "🟢 Buy":
+                            if old_contracts < 0:
+                                detail["Qty"] = -detail["Qty"]
+                                closing_positions.append(detail)
+                            else:
+                                opening_positions.append(detail)
 
-                            elif action == "🔴 Sell":
-                                if old_contracts > 0:
-                                    closing_positions.append(detail)
-                                else:
-                                    detail["Qty"] = -detail["Qty"]
-                                    opening_positions.append(detail)
+                        elif action == "🔴 Sell":
+                            if old_contracts > 0:
+                                closing_positions.append(detail)
+                            else:
+                                detail["Qty"] = -detail["Qty"]
+                                opening_positions.append(detail)
 
-                        st.session_state.opening_positions = opening_positions
-                        st.session_state.closing_positions = closing_positions
+                    amount_spent = 0
+                    amount_received = 0
 
-                        st.session_state.trade_stage = 1
-                        # if opening_positions:
-                        #     # st.write(total_closing_credit, total_opening_cost)
-                        #     if total_closing_credit > total_opening_cost:
-                        #         st.error("❌ You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
-                        #         st.stop()
-                elif not isMarketHours():
-                    st.error('⌚ OUTSIDE MARKET HOURS')
+                    for d in opening_positions:
+                        leg_total = d["Fill Price"] * d["Qty"] * 100
 
-            if st.session_state.trade_stage == 1:
+                        if leg_total > 0:
+                            amount_spent += abs(leg_total) #buy to open (Spending money)
+                        elif leg_total < 0:
+                            amount_received += abs(leg_total) #sell to open (getting credit for it)
 
-                opening_positions = st.session_state.opening_positions
-                closing_positions = st.session_state.closing_positions
+                    for d in closing_positions:
+                        leg_total = d["Fill Price"] * d["Qty"] * 100
 
-                # 🚨 Ensure New Trades Are Debit Only only if there are opening positions
-                total_opening_cost = sum(d["Fill Price"] * d["Qty"] * 100 for d in opening_positions)
-                total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
+                        if leg_total > 0:
+                            amount_received += abs(leg_total) #sell to close (getting money)
+                        elif leg_total < 0:
+                            amount_spent += abs(leg_total) #buying to close (spending money to close)
 
-                st.markdown(f"""
-                ### 💸 Trade Cost Summary:
-                - 🟢 **Opening Cost (Debit)**: ${total_opening_cost:,.2f}
-                - 🔴 **Closing Credit Received**: ${total_closing_credit:,.2f}
-                - 💰 **Net Cost (Opening - Closing)**: ${total_opening_cost - total_closing_credit:,.2f}
-                """)
+                    net_total = amount_spent - amount_received
 
+                    st.markdown(f"""
+                    ### 💸 Trade Cost Summary:
+                    - 🔴 **Amount Spent**: ${amount_spent:,.2f}
+                    - 🟢 **Amount Received**: ${amount_received:,.2f}
+                    - 💰 **Total (Spent - Received)**: ${net_total:,.2f}
+                    """)
+
+                    # if opening_positions:
+                    #     # st.write(total_closing_credit, total_opening_cost)
+                    #     if total_closing_credit > total_opening_cost:
+                    #         st.error("❌ You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
+                    #         st.stop()
+
+                # if st.button('🚀 Execute Trade') and isMarketHours():
                 if st.button('🚀 Execute Trade'):
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
@@ -1039,6 +1045,7 @@ def show_team_portfolio():
                             st.stop()
 
                         realized = (fill_price - old_avg) * trade_qty * 100 if old_contracts > 0 else (old_avg - fill_price) * trade_qty * 100
+                        st.write(old_contracts, trade_qty, detail)
                         leftover = old_contracts - trade_qty
 
                         if leftover == 0:
@@ -1047,7 +1054,7 @@ def show_team_portfolio():
                                                 detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
                         else:
                             upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], leftover, old_avg, fill_price)
-                            log_options_activity(st.session_state["team_id"], tradeAction.SELL, detail['Symbol'], detail["Type"],
+                            log_options_activity(st.session_state["team_id"], tradeAction.STC if trade_qty > 0 else tradeAction.BTC, detail['Symbol'], detail["Type"],
                                                 detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
 
                     st.success("✅ Trade executed successfully.")
@@ -1056,10 +1063,12 @@ def show_team_portfolio():
                     st.session_state.closing_positions = []
 
 
-
+                    clearAggrids()
                     calculate_and_record_performance(st.session_state["team_id"])
 
                     st.rerun()
+                elif not isMarketHours():
+                    st.error('⌚ OUTSIDE MARKET HOURS')
 
     with tab_log:
         st.subheader("👟 Activity Log")
