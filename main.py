@@ -470,7 +470,7 @@ def main():
     if not st.session_state["logged_in"]:
         show_login_screen()
     else:
-        if st.sidebar.button("Logout"):
+        if st.sidebar.button("🚪 Logout"):
             handle_logout()
         if st.session_state["is_admin"]:
             show_admin_panel()
@@ -493,8 +493,8 @@ def handle_logout():
     st.rerun()
 
 def show_login_screen():
-    st.title("Zak Fund")
-    pwd = st.text_input("Enter Team Password or Admin Password:", type="password")
+    st.title("💼 Zak Fund")
+    pwd = st.text_input("🔐 Enter Team Password or Admin Password:", type="password")
 
     if st.button("Login"):
         if pwd == ADMIN_PASSWORD:
@@ -528,10 +528,10 @@ def show_login_screen():
 
 
 def show_admin_panel():
-    st.title("Admin Panel")
+    st.title("🛠️ Admin Panel")
 
 
-    st.subheader("Create / Edit Teams")
+    st.subheader("👥 Create / Edit Teams")
     teams_resp = supabase.table("teams").select("*").execute()
     teams_list = teams_resp.data if teams_resp.data else []
     team_labels = ["(New)"] + [f"{t['id']}: {t['team_name']}" for t in teams_list]
@@ -561,7 +561,7 @@ def show_admin_panel():
     init_cap = st.number_input("Initial Capital", value=def_init, step=5000.0)
     restr_cap = st.number_input("Restricted Capital", value=def_restrict, step=1000.0)
 
-    if st.button("Save Team"):
+    if st.button("🔽 Save Team"):
         data_dict = {
             "team_name": tname,
             "team_password": tpwd,
@@ -572,7 +572,7 @@ def show_admin_panel():
         st.success("Team saved/updated!")
         st.rerun()
 
-    st.subheader("All Teams Overview")
+    st.subheader("📋 All Teams Overview")
     # Quick summary table
     rows = []
     for t in teams_list:
@@ -601,7 +601,7 @@ def show_team_portfolio():
 
 
 
-    st.title(f"Team: {team['team_name']}")
+    st.title(f"🤼 Team: {team['team_name']}")
 
 
     # 🔥 Use the centralized function to get portfolio data
@@ -613,43 +613,43 @@ def show_team_portfolio():
     free_cash = portfolio_stats["free_cash"]
 
     with st.sidebar:
-        if st.button("Refresh Prices"):
+        if st.button("🔃 Refresh Prices"):
             refresh_portfolio_prices(team_id)
             st.rerun()
 
-        st.header("Portfolio Overview")
+        st.header("📊 Portfolio Overview")
         st.number_input(
-            "Original Starting Capital ($)",
+            "💰 Starting Capital ($)",
             value=float(team["initial_capital"]),
             step=1000.0,
             disabled=True
         )
         st.number_input(
-            "Total Account ($)",
+            "📈 Total Account Value ($)",
             value=portfolio_stats["total_val"],
             step=500.0,
             disabled=True
         )
         st.number_input(
-            f"Shares Portion ($) - {portfolio_stats['sum_shares_val'] / portfolio_stats['total_val'] * 100:.2f}%",
+            f"💹 Shares Portion ($) - {portfolio_stats['sum_shares_val'] / portfolio_stats['total_val'] * 100:.2f}%",
             value=portfolio_stats["sum_shares_val"],
             step=500.0,
             disabled=True
         )
         st.number_input(
-            f"Options Portion ($) - {portfolio_stats['sum_opts_val'] / portfolio_stats['total_val'] * 100:.2f}%",
+            f"📃 Options Portion ($) - {portfolio_stats['sum_opts_val'] / portfolio_stats['total_val'] * 100:.2f}%",
             value=portfolio_stats["sum_opts_val"],
             step=500.0,
             disabled=True
         )
         st.number_input(
-            f"Free Cash ($) - {portfolio_stats['free_cash'] / portfolio_stats['total_val'] * 100:.2f}%",
+            f"💵 Free Cash ($) - {portfolio_stats['free_cash'] / portfolio_stats['total_val'] * 100:.2f}%",
             value=free_cash,
             step=500.0,
             disabled=True
         )
         st.number_input(
-            "Total PnL ($)",
+            "🤑 Total PnL ($)",
             value=portfolio_stats["total_pnl"],
             step=500.0,
             disabled=True
@@ -657,11 +657,15 @@ def show_team_portfolio():
 
     # TABS
     tab_shares, tab_opts, tab_log, tab_perf = st.tabs([
-        "Shares", "Options", "Activity Log", "Performance"
+        "💹 Shares",
+        "📊 Options",
+        "📝 Activity Log",
+        "📈 Performance"
     ])
 
+
     with tab_shares:
-        st.subheader("Your Shares")
+        st.subheader("💼 Your Shares")
         if shares_df.empty:
             st.info("No share positions.")
         else:
@@ -669,14 +673,14 @@ def show_team_portfolio():
             df_disp["Position Value"] = df_disp["shares_held"] * df_disp["current_price"]
             st.dataframe(df_disp, use_container_width=True)
 
-        st.subheader("Trade Shares")
+        st.subheader("🛒 Trade Shares")
         col1, col2 = st.columns(2)
         ticker_in = col1.text_input("Ticker (e.g. AAPL, SPY)")
         px = fetch_share_price(ticker_in)
         qty_in = col2.number_input("Shares to Buy(+) or Sell(-)", step=1.0)
 
         st.write(f"Current Price: ${px:,.2f}")
-        if st.button("Execute Share Trade"):
+        if st.button("📝 Execute Share Trade"):
             if qty_in == 0:
                 st.warning("No shares specified.")
             else:
@@ -742,7 +746,7 @@ def show_team_portfolio():
         # -------------------------
 
         # Step 1: Select an Existing Position or Search for a New Trade
-        st.markdown("### Select Existing Position or Find a New Trade")
+        st.markdown("### 🎯 Select Existing Position or Find a New Trade")
 
         existing_opts = load_options(st.session_state["team_id"])
         selected_existing = pd.DataFrame()
@@ -751,7 +755,7 @@ def show_team_portfolio():
         # 🔹 User selects one or multiple existing positions for closing (supports spreads)
         if not existing_opts.empty:
             existing_opts.rename(columns={'symbol': 'Symbol', 'expiration': 'Expiration', 'strike': 'Strike', 'call_put': 'Type',
-                                          'contracts_held': 'Qty', 'avg_cost': 'Avg Cost', 'current_price': 'Current Price', 'unrealized_pl': 'PnL',
+                                          'contracts_held': 'Contracts Held', 'avg_cost': 'Avg Cost', 'current_price': 'Current Price', 'unrealized_pl': 'PnL',
                                           'created_at': 'Bought On', 'updated_at': 'Last Updated'
                                         }, inplace=True)
 
@@ -761,9 +765,10 @@ def show_team_portfolio():
             existing_opts["Last Updated"] = pd.to_datetime(existing_opts["Last Updated"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
 
             existing_opts["PnL"] = (existing_opts["PnL"] / existing_opts["Avg Cost"]).round(0).astype(int).astype(str) + "%"
+            existing_opts["Avg Cost"] = existing_opts["Avg Cost"].round(2)
+            existing_opts["Current Price"] = existing_opts["Current Price"].round(2)
 
-
-            st.markdown("#### Existing Positions (Select to Close)")
+            st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
             gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
             grid_options_exist = gb_exist.build()
@@ -772,16 +777,15 @@ def show_team_portfolio():
                 gridOptions=grid_options_exist,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 height=250,
-                fit_columns_on_grid_load=True
+                fit_columns_on_grid_load=True,
+                key='exist_opts'
             )
             selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
         else:
             st.info("No existing option positions.")
 
-        st.write("Selected Existing Positions:")
-        st.write(selected_existing)
         # 🔹 If no existing position is selected, allow the user to enter a new symbol
-        selected_symbol = st.text_input("Symbol for Chain (e.g. SPY)", key="chain_symbol").upper()
+        selected_symbol = st.text_input("### 🎫 Symbol for Chain (e.g. SPY)", key="chain_symbol").upper()
 
         if selected_symbol:
             chain_data = get_options_chain(selected_symbol)
@@ -868,17 +872,25 @@ def show_team_portfolio():
         trade_details = []
 
         if not selected_existing.empty or not selected_calls.empty or not selected_puts.empty:
-            st.markdown("### Specify Trade Details")
+            st.markdown("### 🧮 Specify Trade Details")
 
             selected_legs = pd.concat([selected_existing, selected_calls, selected_puts], ignore_index=True)
             for idx, leg in selected_legs.iterrows():
                 with st.container():
                     col1, col2, col3, col4 = st.columns(4)
-                    col1.subheader(f"""**{leg['Symbol']} {leg['Strike']} {leg['Type']}**\n  \n {f"**{leg['Bid']}B - {leg['Ask']}A**" if
-                                    'Bid' in leg and 'Ask' in leg else leg['avg_cost']}""")
+                    bid_ask_text = f"💰 **{leg['Bid']}B - {leg['Ask']}A**" if 'Bid' in leg and 'Ask' in leg else f"💸 **Current Avg: ${leg.get('Avg Cost', 0):,.2f}**"
 
-                    action = col2.selectbox("Action", options=["Buy", "Sell"], key=f"action_{idx}")
-                    qty = col3.number_input("Contracts", value=abs(leg.get("contracts_held", 1)), min_value=1, step=1, key=f"qty_{idx}")
+                    col1.markdown(f"""
+                    ### {idx+1}. **{leg['Symbol']} {leg['Strike']} {leg['Type']}**
+                    📅 Exp: {leg['Expiration']}
+
+                    {bid_ask_text}
+                    """)
+
+                    default_action_index = 1 if leg.get('Avg Cost', 0) != 0 else 0
+                    action = col2.selectbox("Action", options=["Buy", "Sell"], key=f"action_{idx}", index=default_action_index)
+
+                    qty = col3.number_input("Contracts", value=abs(leg.get("Contracts Held", 1)), min_value=1, step=1, key=f"qty_{idx}")
                     fill_price = col4.number_input("Estimated Fill Price",value=fetch_option_price(leg["Symbol"], leg["Expiration"], leg["Strike"], leg["Type"], is_buy=(action == "Buy")),  disabled=True, key=f"price_{idx}")
 
                     trade_details.append({
@@ -893,10 +905,10 @@ def show_team_portfolio():
 
             # Step 3: Execute Trade
             # if st.button("Execute Trade") and trade_details and isMarketHours():
-            if st.button("Execute Trade") and trade_details:
+            if st.button("🔮 Execute Trade") and trade_details:
 
                 if all(detail["Qty"] == 0 for detail in trade_details):
-                    st.warning("Please specify a nonzero quantity for at least one leg.")
+                    st.warning("⚠️ Please specify a nonzero quantity for at least one leg.")
                 else:
                     closing_positions = []
                     opening_positions = []
@@ -944,7 +956,7 @@ def show_team_portfolio():
                         total_closing_credit = sum(d["Fill Price"] * d["Qty"] * 100 for d in closing_positions)
                         # st.write(total_closing_credit, total_opening_cost)
                         if total_closing_credit > total_opening_cost:
-                            st.error("You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
+                            st.error("❌ You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
                             st.stop()
 
                     # ✅ Process Opening Trades
@@ -1008,26 +1020,26 @@ def show_team_portfolio():
                             log_options_activity(st.session_state["team_id"], tradeAction.SELL, detail['Symbol'], detail["Type"],
                                                 detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
 
-                    st.success("Trade executed successfully.")
+                    st.success("✅ Trade executed successfully.")
                     calculate_and_record_performance(st.session_state["team_id"])
                     st.rerun()
             elif not isMarketHours():
-                st.error('OUTSIDE MARKET HOURS')
+                st.error('⌚ OUTSIDE MARKET HOURS')
 
     with tab_log:
-        st.subheader("Activity Log")
+        st.subheader("👟 Activity Log")
         act_df = load_activity(team_id)
         if act_df.empty:
-            st.info("No recent activity.")
+            st.info("🚫 No recent activity.")
         else:
             for _, row in act_df.iterrows():
                 st.markdown(f"• {row['message']}", unsafe_allow_html=True)
 
     with tab_perf:
-        st.subheader("Performance Over Time")
+        st.subheader("📈 Performance Over Time")
         perf_df = load_performance(team_id)
         if perf_df.empty:
-            st.info("No performance records yet.")
+            st.info("⛔ No performance records yet.")
         else:
             perf_df = perf_df.sort_values("date")
             chart = (
