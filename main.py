@@ -457,7 +457,7 @@ def main():
     if not st.session_state["logged_in"]:
         show_login_screen()
     else:
-        if st.button("Logout"):
+        if st.sidebar.button("Logout"):
             handle_logout()
         if st.session_state["is_admin"]:
             show_admin_panel()
@@ -589,9 +589,6 @@ def show_team_portfolio():
 
     st.title(f"Team: {team['team_name']}")
 
-    if st.button("Refresh Prices"):
-        refresh_portfolio_prices(team_id)
-        st.rerun()
 
     # 🔥 Use the centralized function to get portfolio data
     portfolio_stats = compute_portfolio_stats(team_id)
@@ -601,22 +598,48 @@ def show_team_portfolio():
 
     free_cash = portfolio_stats["free_cash"]
 
-    colA = st.columns(6)
-    colA[0].number_input("Original Starting Capital ($)", value=float(team["initial_capital"]), step=1000.0, disabled=True)
-    colA[1].number_input("Total Account ($)", value=portfolio_stats["total_val"], step=500.0, disabled=True)
-    colA[2].number_input(
-        f"Shares Portion ($) - {portfolio_stats['sum_shares_val'] / portfolio_stats['total_val'] * 100:.2f}%",
-        value=portfolio_stats["sum_shares_val"], step=500.0, disabled=True
-    )
-    colA[3].number_input(
-        f"Options Portion ($) - {portfolio_stats['sum_opts_val'] / portfolio_stats['total_val'] * 100:.2f}%",
-        value=portfolio_stats["sum_opts_val"], step=500.0, disabled=True
-    )
-    colA[4].number_input(
-        f"Free Cash ($) - {portfolio_stats['free_cash'] / portfolio_stats['total_val'] * 100:.2f}%",
-        value=free_cash, step=500.0, disabled=True
-    )
-    colA[5].number_input("Total PnL ($)", value=portfolio_stats["total_pnl"], step=500.0, disabled=True)
+    with st.sidebar:
+        if st.button("Refresh Prices"):
+            refresh_portfolio_prices(team_id)
+            st.rerun()
+
+        st.header("Portfolio Overview")
+        st.number_input(
+            "Original Starting Capital ($)",
+            value=float(team["initial_capital"]),
+            step=1000.0,
+            disabled=True
+        )
+        st.number_input(
+            "Total Account ($)",
+            value=portfolio_stats["total_val"],
+            step=500.0,
+            disabled=True
+        )
+        st.number_input(
+            f"Shares Portion ($) - {portfolio_stats['sum_shares_val'] / portfolio_stats['total_val'] * 100:.2f}%",
+            value=portfolio_stats["sum_shares_val"],
+            step=500.0,
+            disabled=True
+        )
+        st.number_input(
+            f"Options Portion ($) - {portfolio_stats['sum_opts_val'] / portfolio_stats['total_val'] * 100:.2f}%",
+            value=portfolio_stats["sum_opts_val"],
+            step=500.0,
+            disabled=True
+        )
+        st.number_input(
+            f"Free Cash ($) - {portfolio_stats['free_cash'] / portfolio_stats['total_val'] * 100:.2f}%",
+            value=free_cash,
+            step=500.0,
+            disabled=True
+        )
+        st.number_input(
+            "Total PnL ($)",
+            value=portfolio_stats["total_pnl"],
+            step=500.0,
+            disabled=True
+        )
 
     # TABS
     tab_shares, tab_opts, tab_log, tab_perf = st.tabs([
@@ -773,18 +796,23 @@ def show_team_portfolio():
                     df_calls = pd.DataFrame(calls_list)
                     df_puts = pd.DataFrame(puts_list)
 
-                    # Display Calls and Puts Side-by-Side
-                    col_calls, col_puts = st.columns(2)
+                    tab_calls, tab_puts = st.columns(2)
 
-                    with col_calls:
-                        st.markdown("#### Calls")
-                        gb_calls = GridOptionsBuilder.from_dataframe(df_calls)
-                        gb_calls.configure_default_column(
-                            resizable=True, autoWidth=True, wrapText=True
+                    def configure_aggrid_dynamic(df):
+                        gb = GridOptionsBuilder.from_dataframe(df)
+                        gb.configure_default_column(
+                            resizable=True,
+                            wrapText=True,
+                            minWidth=80
                         )
+                        gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+                        return gb.build()
 
-                        gb_calls.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
-                        grid_options_calls = gb_calls.build()
+
+                    with tab_calls:
+                        st.markdown("#### 📈 Calls")
+
+                        grid_options_calls = configure_aggrid_dynamic(df_calls)
                         grid_response_calls = AgGrid(
                             df_calls,
                             gridOptions=grid_options_calls,
@@ -794,14 +822,10 @@ def show_team_portfolio():
                         )
                         selected_calls = pd.DataFrame(grid_response_calls.get("selected_rows", []))
 
-                    with col_puts:
-                        st.markdown("#### Puts")
-                        gb_puts = GridOptionsBuilder.from_dataframe(df_puts)
-                        gb_puts.configure_default_column(
-                            resizable=True, autoWidth=True, wrapText=True
-                        )
-                        gb_puts.configure_selection(selection_mode="multiple", use_checkbox=True)  # Multi-leg support
-                        grid_options_puts = gb_puts.build()
+                    with tab_puts:
+                        st.markdown("#### 📉 Puts")
+
+                        grid_options_puts = configure_aggrid_dynamic(df_puts)
                         grid_response_puts = AgGrid(
                             df_puts,
                             gridOptions=grid_options_puts,
@@ -810,7 +834,6 @@ def show_team_portfolio():
                             fit_columns_on_grid_load=True
                         )
                         selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
-
         # Step 2: Trade Details Input
         trade_details = []
 
@@ -839,7 +862,9 @@ def show_team_portfolio():
                     })
 
             # Step 3: Execute Trade
-            if st.button("Execute Trade") and trade_details and isMarketHours():
+            # if st.button("Execute Trade") and trade_details and isMarketHours():
+            if st.button("Execute Trade") and trade_details:
+
                 if all(detail["Qty"] == 0 for detail in trade_details):
                     st.warning("Please specify a nonzero quantity for at least one leg.")
                 else:
