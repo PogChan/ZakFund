@@ -870,7 +870,6 @@ def show_team_portfolio():
             st.markdown("### 🧮 Specify Trade Details")
 
             selected_legs = pd.concat([selected_existing, selected_calls, selected_puts], ignore_index=True)
-            st.write(selected_legs)
             for idx, leg in selected_legs.iterrows():
                 with st.container():
                     col1, col2, col3, col4 = st.columns(4)
@@ -1045,7 +1044,6 @@ def show_team_portfolio():
                             st.stop()
 
                         realized = (fill_price - old_avg) * trade_qty * 100 if old_contracts > 0 else (old_avg - fill_price) * trade_qty * 100
-                        st.write(old_contracts, trade_qty, detail)
                         leftover = old_contracts - trade_qty
 
                         if leftover == 0:
