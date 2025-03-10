@@ -783,7 +783,7 @@ def show_team_portfolio():
 
         # Step 2: Trade Details Input
         trade_details = []
-
+        st.write(selected_calls)
         if not selected_existing.empty or not selected_calls.empty or not selected_puts.empty:
             st.markdown("### Specify Trade Details")
 
