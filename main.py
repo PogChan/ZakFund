@@ -862,7 +862,6 @@ def show_team_portfolio():
                         selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
         # Step 2: Trade Details Input
         trade_details = []
-
         if not selected_existing.empty or not selected_calls.empty or not selected_puts.empty:
             st.markdown("### 🧮 Specify Trade Details")
 
