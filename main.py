@@ -365,7 +365,7 @@ def refresh_portfolio_prices(team_id: int):
         # We'll do "mid" logic or so:
         # Let's just treat is_buy = True if contracts_held>0
         # This is a simplification to get a "mark price"
-        is_buy = True
+        is_buy = True if contracts_held > 0 else False
         try:
             current_px = fetch_option_price(symbol, exp, strike, call_put, is_buy)
         except:
