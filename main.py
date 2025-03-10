@@ -759,6 +759,7 @@ def show_team_portfolio():
             existing_opts["Avg Cost"] = existing_opts["Avg Cost"].round(2)
             existing_opts["Current Price"] = existing_opts["Current Price"].round(2)
             existing_opts["PnL"] = ((existing_opts["Current Price"] - existing_opts["Avg Cost"]) / existing_opts["Avg Cost"] * 100).round(0).astype(int).astype(str) + "%"
+            
             st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
             gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=[])
