@@ -32,7 +32,6 @@ cookies = EncryptedCookieManager(
     password=cookiesPass,
 )
 
-
 if not cookies.ready():
     st.stop()
 
@@ -456,7 +455,7 @@ def main():
     # Synchronize session state with cookies
     st.session_state["logged_in"] = cookies.get("logged_in", "false") == "true"
     st.session_state["is_admin"] = cookies.get("is_admin", "false") == "true"
-    st.session_state["team_id"] = int(cookies.get("team_id", None))
+    st.session_state["team_id"] = int(cookies.get("team_id", '-1'))
 
     # Authentication logic
     if not st.session_state["logged_in"]:
