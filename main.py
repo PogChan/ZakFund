@@ -590,10 +590,7 @@ def show_team_portfolio():
         st.error("Team not found.")
         return
 
-
-
     st.title(f"🤼 Team: {team['team_name']}")
-
 
     # 🔥 Use the centralized function to get portfolio data
     portfolio_stats = compute_portfolio_stats(team_id)
@@ -993,7 +990,7 @@ def show_team_portfolio():
                     #         st.stop()
 
                 # if st.button('🚀 Execute Trade') and isMarketHours():
-                if st.button('🚀 Execute Trade'):
+                if st.button('🚀 Execute Trade') and isMarketHours():
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
                         existing = pd.DataFrame() if opts_df.empty else opts_df[
