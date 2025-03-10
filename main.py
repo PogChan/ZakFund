@@ -370,8 +370,14 @@ def refresh_portfolio_prices(team_id: int):
             current_px = fetch_option_price(symbol, exp, strike, call_put, is_buy)
         except:
             current_px = row["current_price"]  # fallback
-
-        new_unreal = (current_px - row["avg_cost"]) * (contracts_held * 100)
+            
+        if contracts_held > 0:
+    # Long options
+            new_unreal = (current_px - row["avg_cost"]) * contracts_held * 100
+        else:
+    # Short options (you want price to go down)
+            new_unreal = (row["avg_cost"] - current_px) * abs(contracts_held) * 100
+        
         supabase.table("portfolio_options").update({
             "current_price": current_px,
             "unrealized_pl": new_unreal
@@ -750,11 +756,9 @@ def show_team_portfolio():
 
             existing_opts["Bought On"] = pd.to_datetime(existing_opts["Bought On"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
             existing_opts["Last Updated"] = pd.to_datetime(existing_opts["Last Updated"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
-
-            existing_opts["PnL"] = (existing_opts["PnL"] / existing_opts["Avg Cost"]).round(0).astype(int).astype(str) + "%"
             existing_opts["Avg Cost"] = existing_opts["Avg Cost"].round(2)
             existing_opts["Current Price"] = existing_opts["Current Price"].round(2)
-
+            existing_opts["PnL"] = ((existing_opts["Current Price"] - existing_opts["Avg Cost"]) / existing_opts["Avg Cost"] * 100).round(0).astype(int).astype(str) + "%"
             st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
             gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=[])
