@@ -748,7 +748,7 @@ def show_team_portfolio():
         # 🔹 User selects one or multiple existing positions for closing (supports spreads)
         if not existing_opts.empty:
             existing_opts.rename(columns={'symbol': 'Symbol', 'expiration': 'Expiration', 'strike': 'Strike', 'call_put': 'Type',
-                                          'contracts_held': 'Contracts Held', 'avg_cost': 'Avg Cost', 'current_price': 'Current Price', 'unrealized_pl': 'PnL',
+                                          'contracts_held': 'Contracts Held', 'avg_cost': 'Avg Cost', 'current_price': 'Current Price', 'unrealized_pl': 'Total PnL',
                                           'created_at': 'Bought On', 'updated_at': 'Last Updated'
                                         }, inplace=True)
 
@@ -758,18 +758,25 @@ def show_team_portfolio():
             existing_opts["Last Updated"] = pd.to_datetime(existing_opts["Last Updated"], utc=True).dt.tz_convert(user_tz).dt.strftime("%b %d, %Y %I:%M %p")
             existing_opts["Avg Cost"] = existing_opts["Avg Cost"].round(2)
             existing_opts["Current Price"] = existing_opts["Current Price"].round(2)
-            existing_opts["PnL"] = ((existing_opts["Current Price"] - existing_opts["Avg Cost"]) / existing_opts["Avg Cost"] * 100).round(0).astype(int).astype(str) + "%"
+            existing_opts['Total PnL'] = existing_opts['Total PnL'].round(2)
+
+            existing_opts["PnL %"] = ((existing_opts["Current Price"] - existing_opts["Avg Cost"]) / existing_opts["Avg Cost"] * 100).round(0).astype(int).astype(str) + "%"
             st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
             gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=[])
             gb_exist.configure_grid_options(onFirstDataRendered=clear_selection_js)
+            gb_exist.configure_default_column(
+                resizable=True,
+                wrapText=True,
+                minWidth=80  # Adjust as needed
+            )
             grid_options_exist = gb_exist.build()
             grid_response_exist = AgGrid(
                 existing_opts,
                 gridOptions=grid_options_exist,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
                 height=250,
-                fit_columns_on_grid_load=True,
+                fit_columns_on_grid_load=False,
                 key='exist_opts',
                 allow_unsafe_jscode=True
             )
@@ -846,7 +853,7 @@ def show_team_portfolio():
                             gridOptions=grid_options_calls,
                             update_mode=GridUpdateMode.SELECTION_CHANGED,
                             height=250,
-                            fit_columns_on_grid_load=True,
+                            fit_columns_on_grid_load=False,
                             key='calls'
                         )
                         selected_calls = pd.DataFrame(grid_response_calls.get("selected_rows", []))
@@ -860,7 +867,7 @@ def show_team_portfolio():
                             gridOptions=grid_options_puts,
                             update_mode=GridUpdateMode.SELECTION_CHANGED,
                             height=250,
-                            fit_columns_on_grid_load=True,
+                            fit_columns_on_grid_load=False,
                             key='puts'
                         )
                         selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
