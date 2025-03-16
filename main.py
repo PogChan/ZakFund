@@ -352,7 +352,6 @@ def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str
         "fill_price": price,
         "realized_pl": realized_pl,
     }).execute()
-
 # -----------------------------------------------------------------------------
 # Refresh All Positions
 # -----------------------------------------------------------------------------
@@ -374,8 +373,9 @@ def refresh_portfolio_prices(team_id: int):
 
         try:
             current_px = fetch_option_price(symbol, exp, strike, call_put, is_buy=(contracts_held > 0))
-        except:
+        except Exception as e:
             current_px = current_price  # fallback
+
         # If option has expired
         if today > exp:
             stock_px = fetch_share_price(symbol)
@@ -407,33 +407,27 @@ def refresh_portfolio_prices(team_id: int):
                     realized_pl=realized_pl
                 )
 
-            # ITM: simulate exercise as a stock transaction at strike
+            # ITM: simulate exercise as a stock transaction at strike, using adjust_share_position
             else:
                 total_shares = abs(contracts_held) * 100
 
+                # Determine shares_delta based on option type and position
                 if call_put.upper() == "CALL":
-                    if contracts_held > 0:
-                        # Long Call → Receive shares at strike (simulate buy)
-                        upsert_shares(team_id, symbol, shares_held=total_shares, avg_cost=strike, current_price=stock_px)
-                        log_shares_activity(team_id, tradeAction.BUY, symbol, total_shares, strike)
-
-                    else:
-                        # Short Call → Deliver shares at strike (simulate sell)
-                        upsert_shares(team_id, symbol, shares_held=-total_shares, avg_cost=strike, current_price=stock_px)
-                        log_shares_activity(team_id, tradeAction.SELL, symbol, -total_shares, strike)
-
+                    # Long Call → Receive shares (simulate buy) if contracts_held > 0;
+                    # Short Call → Deliver shares (simulate sell) if contracts_held < 0
+                    shares_delta = total_shares if contracts_held > 0 else -total_shares
                 elif call_put.upper() == "PUT":
-                    if contracts_held > 0:
-                        # Long Put → Deliver shares at strike (simulate sell)
-                        upsert_shares(team_id, symbol, shares_held=-total_shares, avg_cost=strike, current_price=stock_px)
-                        log_shares_activity(team_id, tradeAction.SELL, symbol, -total_shares, strike)
+                    # Long Put → Deliver shares (simulate sell) if contracts_held > 0;
+                    # Short Put → Receive shares (simulate buy) if contracts_held < 0
+                    shares_delta = -total_shares if contracts_held > 0 else total_shares
+                else:
+                    shares_delta = 0
 
-                    else:
-                        # Short Put → Receive shares at strike (simulate buy)
-                        upsert_shares(team_id, symbol, shares_held=total_shares, avg_cost=strike, current_price=stock_px)
-                        log_shares_activity(team_id, tradeAction.BUY, symbol, total_shares, strike)
+                # Adjust the share position using our helper
+                adjust_share_position(team_id, symbol, shares_delta, strike, stock_px)
 
-                # Log the option activity for ITM expiration
+                # Log the option activity for ITM expiration.
+                # (This logs the option premium component; the stock P/L is handled separately.)
                 log_options_activity(
                     team_id=team_id,
                     trdAction=action + " (Expired ITM - Exercised)",
@@ -449,7 +443,7 @@ def refresh_portfolio_prices(team_id: int):
             delete_option_by_id(row["id"])
             continue
 
-        # If not expired, continue normal unrealized PnL update
+        # If not expired, continue normal unrealized PnL update for options
         if contracts_held > 0:
             new_unreal = (current_px - row["avg_cost"]) * contracts_held * 100
         else:
@@ -459,7 +453,6 @@ def refresh_portfolio_prices(team_id: int):
             "current_price": current_px,
             "unrealized_pl": new_unreal
         }).eq("id", row["id"]).execute()
-
 
     # Refresh shares
     shares_df = load_shares(team_id)
@@ -473,6 +466,43 @@ def refresh_portfolio_prices(team_id: int):
 
     # Recalc performance
     calculate_and_record_performance(team_id)
+
+
+def adjust_share_position(team_id, symbol, shares_delta, strike_price, stock_px):
+    existing = load_shares(team_id)
+    row = existing[existing["ticker"] == symbol.upper()]
+    old_shares = float(row["shares_held"].iloc[0]) if not row.empty else 0
+    old_avg = float(row["avg_cost"].iloc[0]) if not row.empty else 0
+    row_id = row["id"].iloc[0] if not row.empty else None
+
+    new_total = old_shares + shares_delta
+
+    # 🎯 Determine proper avg cost
+    if shares_delta > 0:
+        # Buying more = weighted average
+        if new_total != 0:
+            new_avg = ((old_shares * old_avg) + (shares_delta * strike_price)) / new_total
+        else:
+            new_avg = strike_price
+        realized_pl = 0  # No profit yet on buys
+    elif shares_delta < 0:
+        if new_total >= 0:
+            # Selling from existing holdings → realized profit
+            realized_pl = (strike_price - old_avg) * abs(shares_delta)
+            new_avg = old_avg
+        else:
+            # You flipped to short → new short basis
+            realized_pl = (strike_price - old_avg) * old_shares  # Profit only from shares you actually owned
+            new_avg = strike_price  # Reset cost basis for net short position
+    else:
+        new_avg = old_avg
+        realized_pl = 0
+
+    upsert_shares(team_id, symbol, shares_held=new_total, avg_cost=new_avg, current_price=stock_px, row_id=row_id)
+
+    trade_type = tradeAction.BUY if shares_delta > 0 else tradeAction.SELL
+    log_shares_activity(team_id, trade_type, symbol, shares_delta, strike_price, realized_pl=realized_pl)
+
 
 def compute_portfolio_stats(team_id):
     """Calculate portfolio performance stats for a given team."""
