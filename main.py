@@ -801,7 +801,7 @@ def show_team_portfolio():
                     # Buying => check free_cash
                     cost = px * qty_in
                     if cost > free_cash:
-                        st.error("Not enough free cash.")
+                        st.error("💵 INSUFFICIENT FUNDS")
                         return
                     # Weighted average
                     if new_total != 0:
@@ -1046,7 +1046,7 @@ def show_team_portfolio():
                     })
 
 
-
+            canBuy= False
             # if isMarketHours() and trade_details and  st.button("Execute Trade", on_click=reviewTrade):
             if trade_details:
                 # Save in session state to persist after rerun
@@ -1123,6 +1123,8 @@ def show_team_portfolio():
                     - 💰 **Total (Spent - Received)**: ${net_total:,.2f}
                     """)
 
+                    canBuy = net_total <= free_cash
+
                     # if opening_positions:
                     #     # st.write(total_closing_credit, total_opening_cost)
                     #     if total_closing_credit > total_opening_cost:
@@ -1130,7 +1132,7 @@ def show_team_portfolio():
                     #         st.stop()
 
                 # if st.button('🚀 Execute Trade') and isMarketHours():
-                if st.button('🚀 Execute Trade') and isMarketHours():
+                if st.button('🚀 Execute Trade') and canBuy and isMarketHours():
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
                         existing = pd.DataFrame() if opts_df.empty else opts_df[
@@ -1203,6 +1205,8 @@ def show_team_portfolio():
                     st.rerun()
                 elif not isMarketHours():
                     st.error('⌚ OUTSIDE MARKET HOURS')
+                elif not canBuy:
+                    st.error('💸 INSUFFICIENT FUNDS')
 
     with tab_log:
         st.subheader("👟 Activity Log")
