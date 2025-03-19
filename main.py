@@ -264,6 +264,17 @@ def isMarketHours() -> bool:
 
     return market_open <= now <= market_close
 
+
+def isFirst15() -> bool:
+
+    est = pytz.timezone("America/New_York")
+    now = datetime.now(est).time()
+
+    market_open = time(9, 30)
+    first15 = time(9, 50)
+
+    return market_open <= now <= first15
+
 def log_shares_activity(team_id: int, trdAction:str, ticker: str, shares_added: float, price: float, realized_pl=0):
     action = "BOUGHT" if shares_added > 0 else "SOLD"
     color = "#65FE08" if shares_added > 0 else "red"
@@ -904,7 +915,12 @@ def show_team_portfolio():
                     action = col2.selectbox("Action", options=["🟢 Buy", "🔴 Sell"], key=f"action_{idx}", index=default_action_index)
 
                     qty = col3.number_input("Contracts", value=abs(contracts_display) if contracts_display != 0 else 1, min_value=1, step=1, key=f"qty_{idx}")
-                    fill_price = col4.number_input("Estimated Fill Price",value=fetch_option_price(leg["Symbol"], leg["Expiration"], leg["Strike"], leg["Type"], is_buy=(action == "Buy")),  disabled=True, key=f"price_{idx}")
+                    
+                    fetchedMarketPrice = fetch_option_price(leg["Symbol"], leg["Expiration"], leg["Strike"], leg["Type"], is_buy=(action == "Buy"))
+                    if fetchedMarketPrice < 0.05 and isFirst15():
+                        fill_price = col4.number_input("Estimated Fill Price", disabled=False, key=f"price_{idx}")
+                    else:
+                        fill_price = col4.number_input("Estimated Fill Price",value=fetchedMarketPrice, disabled=True, key=f"price_{idx}")
 
                     trade_details.append({
                         "Type": leg["Type"],
@@ -1001,7 +1017,7 @@ def show_team_portfolio():
                     #         st.stop()
 
                 # if st.button('🚀 Execute Trade') and isMarketHours():
-                if st.button('🚀 Execute Trade') and isMarketHours():
+                if st.button('🚀 Execute Trade') :
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
                         existing = pd.DataFrame() if opts_df.empty else opts_df[
@@ -1017,6 +1033,9 @@ def show_team_portfolio():
 
                         trade_qty = detail["Qty"]
                         fill_price = fetch_option_price(detail["Symbol"], detail["Expiration"], detail["Strike"], detail["Type"], is_buy= True if trade_qty > 0 else False)
+
+                        if fill_price < 0.05 and isFirst15():
+                            fill_price = detail["Fill Price"]
 
                         new_total = old_contracts + trade_qty
                         new_avg = ((old_contracts * old_avg) + (trade_qty * fill_price)) / new_total if new_total != 0 else fill_price
@@ -1044,6 +1063,9 @@ def show_team_portfolio():
 
                         trade_qty = detail["Qty"]
                         fill_price =  fetch_option_price(detail["Symbol"], detail["Expiration"], detail["Strike"], detail["Type"], is_buy= True if trade_qty > 0 else False)
+
+                        if fill_price < 0.05 and isFirst15():
+                            fill_price = detail["Fill Price"]
 
                         if abs(trade_qty) > abs(old_contracts):
                             #this should also prevent the whole closing just one side and turn that into a new position
