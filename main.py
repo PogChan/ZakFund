@@ -1147,7 +1147,6 @@ def show_team_portfolio():
                     #         st.error("❌ You are trying to execute a **credit** trade. Only **debit** trades are allowed.")
                     #         st.stop()
 
-                # if st.button('🚀 Execute Trade') and isMarketHours():
                 if st.button('🚀 Execute Trade') and canBuy and isMarketHours():
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
