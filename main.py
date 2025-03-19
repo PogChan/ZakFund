@@ -60,6 +60,7 @@ supabase: Client = create_client(url, key)
 if "spread_legs" not in st.session_state:
     st.session_state["spread_legs"] = []
 
+
 # -----------------------------------------------------------------------------
 # Database CRUD Helpers
 # -----------------------------------------------------------------------------
@@ -211,29 +212,49 @@ def compute_option_fill_price(bid: float, ask: float, is_buy: bool) -> float:
         else:
             return bid + random.uniform(0.3, 0.5) * spread
 
+
 def fetch_option_price(symbol: str, expiration: str, strike: float, call_put: str, is_buy: bool) -> float:
-    data = get_options_chain(symbol)
-    if not data or "options" not in data:
-        raise ValueError("Option chain data not found or invalid JSON structure.")
+    option_type = call_put.upper()
 
-    all_exps = data["options"]
-    if expiration not in all_exps:
-        raise ValueError(f"No expiration {expiration} found for {symbol}.")
+    try:
+        ticker = yf.Ticker(symbol)
+        opt_chain = ticker.option_chain(expiration)
+        options = opt_chain.calls if option_type == "CALL" else opt_chain.puts
 
-    cp_key = "c" if call_put.upper() == "CALL" else "p"
-    cp_dict = all_exps[expiration].get(cp_key, {})
-    if not cp_dict:
-        raise ValueError(f"No {call_put} data for expiration {expiration} in chain.")
+        match = options[options['strike'] == strike]
+        if not match.empty:
+            bid = float(match['bid'].values[0])
+            ask = float(match['ask'].values[0])
+            return compute_option_fill_price(bid, ask, is_buy)
 
-    strike_key = f"{strike:.2f}"
-    if strike_key not in cp_dict:
-        raise ValueError(f"Strike {strike} not found for {call_put} {expiration} {symbol}.")
+    except Exception as e:
+        st.warning(f"⚠ Using FallBack API")
 
-    option_data = cp_dict[strike_key]
-    bid = option_data.get("b", 0)
-    ask = option_data.get("a", 0)
-    fill_price = compute_option_fill_price(bid, ask, is_buy)
-    return fill_price
+    # -------- Fallback to BASEAPI ----------
+    try:
+        chain_data = get_options_chain(symbol)  # your BASEAPI wrapper
+        exp_chain = chain_data["options"].get(expiration, {})
+
+        if option_type == "CALL":
+            option_map = exp_chain.get("c", {})
+        else:
+            option_map = exp_chain.get("p", {})
+
+        strike_str = f"{strike:.2f}"
+        option_entry = option_map.get(strike_str)
+
+        if not option_entry:
+            raise ValueError(f"Strike {strike} not found in BASEAPI either.")
+
+        # Some chains return list of entries (OI, bid, ask, etc.)
+        bid = option_entry.get("b", 0)
+        ask = option_entry.get("a", 0)
+
+        return compute_option_fill_price(bid, ask, is_buy)
+
+    except Exception as e:
+        st.error(f"❌ Failed to fetch option price from BASEAPI: {e}")
+        return 0.0
 
 # -----------------------------------------------------------------------------
 # Activity Logging with Pytz
@@ -290,6 +311,7 @@ def log_shares_activity(team_id: int, trdAction:str, ticker: str, shares_added: 
         f"of <b style='color:#FFD700;'>{ticker}</b> "
         f"at <b style='color:#FFD700;'>\${price:,.2f}</b> "
         f"(Total: <b style='color:{colorNet};'>{signNet}\${abs(cost):,.2f}</b>) "
+        f"(Realized P/L: <b style='color:{'green' if realized_pl >= 0 else 'red'};'>\${realized_pl:,.2f}</b>) "
         f"on {now_str}"
     )
 
@@ -324,6 +346,7 @@ def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str
         f"<b style='color:#FFD700;'> {symbol} {strike:.2f} {call_put} {exp_str}</b> "
         f"at <b>\${price:,.2f}</b> "
         f"(Total: <b style='color:{colorNet};'>{signNet}\${abs(total_cost):,.2f}</b>) "
+        f"(Realized P/L: <b style='color:{'green' if realized_pl >= 0 else 'red'};'>\${realized_pl:,.2f}</b>) "
         f"on {now_str}"
     )
 
@@ -340,16 +363,108 @@ def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str
         "fill_price": price,
         "realized_pl": realized_pl,
     }).execute()
-
 # -----------------------------------------------------------------------------
 # Refresh All Positions
 # -----------------------------------------------------------------------------
 def refresh_portfolio_prices(team_id: int):
-    """
-    Fetch the latest share price for each ticker, and
-    fetch the latest option price for each option position.
-    Update the DB. Then recalc performance.
-    """
+    # Refresh options
+    opts_df = load_options(team_id)
+    today = datetime.today().strftime("%Y-%m-%d")
+
+    for idx, row in opts_df.iterrows():
+        symbol = row["symbol"]
+        exp = row["expiration"]
+        strike = float(row["strike"])
+        call_put = row["call_put"]
+        contracts_held = float(row["contracts_held"])
+        current_price = row["current_price"]  # Last recorded price
+
+        if contracts_held == 0:
+            continue
+
+        try:
+            current_px = fetch_option_price(symbol, exp, strike, call_put, is_buy=(contracts_held > 0))
+        except Exception as e:
+            current_px = current_price  # fallback
+
+        # If option has expired
+        if today > exp:
+            stock_px = fetch_share_price(symbol)
+            intrinsic_value = 0
+            is_itm = False
+
+            if call_put.upper() == "CALL":
+                intrinsic_value = max(0, stock_px - strike)
+                is_itm = intrinsic_value > 0
+            elif call_put.upper() == "PUT":
+                intrinsic_value = max(0, strike - stock_px)
+                is_itm = intrinsic_value > 0
+
+            action = tradeAction.STC if contracts_held > 0 else tradeAction.BTC
+
+            # OTM: expires worthless → no transaction beyond logging
+            if not is_itm:
+                realized_pl = row["avg_cost"] * abs(contracts_held) * 100 * (-1 if contracts_held > 0 else 1)
+
+                log_options_activity(
+                    team_id=team_id,
+                    trdAction=action + " (Expired - OTM)",
+                    symbol=symbol,
+                    call_put=call_put,
+                    expiration=exp,
+                    strike=strike,
+                    contracts_added=-contracts_held,
+                    price=0.00,
+                    realized_pl=realized_pl
+                )
+
+            # ITM: simulate exercise as a stock transaction at strike, using adjust_share_position
+            else:
+                total_shares = abs(contracts_held) * 100
+
+                # Determine shares_delta based on option type and position
+                if call_put.upper() == "CALL":
+                    # Long Call → Receive shares (simulate buy) if contracts_held > 0;
+                    # Short Call → Deliver shares (simulate sell) if contracts_held < 0
+                    shares_delta = total_shares if contracts_held > 0 else -total_shares
+                elif call_put.upper() == "PUT":
+                    # Long Put → Deliver shares (simulate sell) if contracts_held > 0;
+                    # Short Put → Receive shares (simulate buy) if contracts_held < 0
+                    shares_delta = -total_shares if contracts_held > 0 else total_shares
+                else:
+                    shares_delta = 0
+
+                # Adjust the share position using our helper
+                adjust_share_position(team_id, symbol, shares_delta, strike, stock_px)
+
+                # Log the option activity for ITM expiration.
+                # (This logs the option premium component; the stock P/L is handled separately.)
+                log_options_activity(
+                    team_id=team_id,
+                    trdAction=action + " (Expired ITM - Exercised)",
+                    symbol=symbol,
+                    call_put=call_put,
+                    expiration=exp,
+                    strike=strike,
+                    contracts_added=-contracts_held,
+                    price=strike,
+                    realized_pl = -row["avg_cost"] * contracts_held * 100
+                )
+
+            delete_option_by_id(row["id"])
+            continue
+
+        # If not expired, continue normal unrealized PnL update for options
+        if contracts_held > 0:
+            new_unreal = (current_px - row["avg_cost"]) * contracts_held * 100
+        else:
+            new_unreal = (row["avg_cost"] - current_px) * abs(contracts_held) * 100
+
+        supabase.table("portfolio_options").update({
+            "current_price": current_px,
+            "unrealized_pl": new_unreal
+        }).eq("id", row["id"]).execute()
+
     # Refresh shares
     shares_df = load_shares(team_id)
     for idx, row in shares_df.iterrows():
@@ -360,42 +475,45 @@ def refresh_portfolio_prices(team_id: int):
             "unrealized_pl": new_unreal
         }).eq("id", row["id"]).execute()
 
-    # Refresh options
-    opts_df = load_options(team_id)
-    for idx, row in opts_df.iterrows():
-        symbol = row["symbol"]
-        exp = row["expiration"]
-        strike = float(row["strike"])
-        call_put = row["call_put"]
-        contracts_held = float(row["contracts_held"])
-        if contracts_held == 0:
-            continue
-
-        # We'll treat it as a "buy" to get the fill price near ask if net > 0
-        # But strictly speaking, you'd do something more advanced for just "current price."
-        # We'll do "mid" logic or so:
-        # Let's just treat is_buy = True if contracts_held>0
-        # This is a simplification to get a "mark price"
-        is_buy = True if contracts_held > 0 else False
-        try:
-            current_px = fetch_option_price(symbol, exp, strike, call_put, is_buy)
-        except:
-            current_px = row["current_price"]  # fallback
-            
-        if contracts_held > 0:
-    # Long options
-            new_unreal = (current_px - row["avg_cost"]) * contracts_held * 100
-        else:
-    # Short options (you want price to go down)
-            new_unreal = (row["avg_cost"] - current_px) * abs(contracts_held) * 100
-        
-        supabase.table("portfolio_options").update({
-            "current_price": current_px,
-            "unrealized_pl": new_unreal
-        }).eq("id", row["id"]).execute()
-
     # Recalc performance
     calculate_and_record_performance(team_id)
+
+
+def adjust_share_position(team_id, symbol, shares_delta, strike_price, stock_px):
+    existing = load_shares(team_id)
+    row = existing[existing["ticker"] == symbol.upper()]
+    old_shares = float(row["shares_held"].iloc[0]) if not row.empty else 0
+    old_avg = float(row["avg_cost"].iloc[0]) if not row.empty else 0
+    row_id = row["id"].iloc[0] if not row.empty else None
+
+    new_total = old_shares + shares_delta
+
+    # 🎯 Determine proper avg cost
+    if shares_delta > 0:
+        # Buying more = weighted average
+        if new_total != 0:
+            new_avg = ((old_shares * old_avg) + (shares_delta * strike_price)) / new_total
+        else:
+            new_avg = strike_price
+        realized_pl = 0  # No profit yet on buys
+    elif shares_delta < 0:
+        if new_total >= 0:
+            # Selling from existing holdings → realized profit
+            realized_pl = (strike_price - old_avg) * abs(shares_delta)
+            new_avg = old_avg
+        else:
+            # You flipped to short → new short basis
+            realized_pl = (strike_price - old_avg) * old_shares  # Profit only from shares you actually owned
+            new_avg = strike_price  # Reset cost basis for net short position
+    else:
+        new_avg = old_avg
+        realized_pl = 0
+
+    upsert_shares(team_id, symbol, shares_held=new_total, avg_cost=new_avg, current_price=stock_px, row_id=row_id)
+
+    trade_type = tradeAction.BUY if shares_delta > 0 else tradeAction.SELL
+    log_shares_activity(team_id, trade_type, symbol, shares_delta, strike_price, realized_pl=realized_pl)
+
 
 def compute_portfolio_stats(team_id):
     """Calculate portfolio performance stats for a given team."""
@@ -694,7 +812,7 @@ def show_team_portfolio():
                     # Buying => check free_cash
                     cost = px * qty_in
                     if cost > free_cash:
-                        st.error("Not enough free cash.")
+                        st.error("💵 INSUFFICIENT FUNDS")
                         return
                     # Weighted average
                     if new_total != 0:
@@ -753,9 +871,13 @@ def show_team_portfolio():
         # Step 1: Select an Existing Position or Search for a New Trade
         st.markdown("### 🎯 Select Existing Position or Find a New Trade")
         existing_opts = load_options(st.session_state["team_id"])
-        selected_existing = pd.DataFrame()
-        selected_calls = pd.DataFrame()
-        selected_puts = pd.DataFrame()
+        if "selected_existing" not in st.session_state:
+            st.session_state.selected_existing = pd.DataFrame()
+        if "selected_calls" not in st.session_state:
+            st.session_state.selected_calls = pd.DataFrame()
+        if "selected_puts" not in st.session_state:
+            st.session_state.selected_puts = pd.DataFrame()
+
         # 🔹 User selects one or multiple existing positions for closing (supports spreads)
         if not existing_opts.empty:
             existing_opts.rename(columns={'symbol': 'Symbol', 'expiration': 'Expiration', 'strike': 'Strike', 'call_put': 'Type',
@@ -774,7 +896,9 @@ def show_team_portfolio():
             existing_opts["PnL %"] = ((existing_opts["Current Price"] - existing_opts["Avg Cost"]) / existing_opts["Avg Cost"] * 100).round(0).astype(int).astype(str) + "%"
             st.markdown("#### 📂 Existing Positions (Select to Close)")
             gb_exist = GridOptionsBuilder.from_dataframe(existing_opts.drop(columns=["id", "team_id"]))
-            gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=[])
+
+            pre_selected = st.session_state.selected_existing.to_dict('records') if not st.session_state.selected_existing.empty else []
+            gb_exist.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=pre_selected)
             gb_exist.configure_grid_options(onFirstDataRendered=clear_selection_js)
             gb_exist.configure_default_column(
                 resizable=True,
@@ -793,7 +917,7 @@ def show_team_portfolio():
             )
             clearAggrids()
 
-            selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
+            st.session_state.selected_existing = pd.DataFrame(grid_response_exist.get("selected_rows", []))
         else:
             st.info("No existing option positions.")
 
@@ -844,21 +968,26 @@ def show_team_portfolio():
 
                     tab_calls, tab_puts = st.columns(2)
 
-                    def configure_aggrid_dynamic(df):
+                    def configure_aggrid_dynamic(df, grid_type):
                         gb = GridOptionsBuilder.from_dataframe(df)
                         gb.configure_default_column(
                             resizable=True,
                             wrapText=True,
                             minWidth=80
                         )
-                        gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+                        if grid_type == 'CALLS':
+                            pre_selected_calls = st.session_state.selected_calls.to_dict('records') if not st.session_state.selected_calls.empty else []
+                            gb.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=pre_selected_calls)
+                        elif grid_type == 'PUTS':
+                            pre_selected_puts = st.session_state.selected_puts.to_dict('records') if not st.session_state.selected_puts.empty else []
+                            gb.configure_selection(selection_mode="multiple", use_checkbox=True, pre_selected_rows=pre_selected_puts)
+                        else:
+                            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
                         return gb.build()
-
 
                     with tab_calls:
                         st.markdown("#### 📈 Calls")
-
-                        grid_options_calls = configure_aggrid_dynamic(df_calls)
+                        grid_options_calls = configure_aggrid_dynamic(df_calls, 'CALLS')
                         grid_response_calls = AgGrid(
                             df_calls,
                             gridOptions=grid_options_calls,
@@ -867,12 +996,12 @@ def show_team_portfolio():
                             fit_columns_on_grid_load=False,
                             key='calls'
                         )
-                        selected_calls = pd.DataFrame(grid_response_calls.get("selected_rows", []))
+                        st.session_state.selected_calls = pd.DataFrame(grid_response_calls.get("selected_rows", []))
 
                     with tab_puts:
                         st.markdown("#### 📉 Puts")
 
-                        grid_options_puts = configure_aggrid_dynamic(df_puts)
+                        grid_options_puts = configure_aggrid_dynamic(df_puts, 'PUTS')
                         grid_response_puts = AgGrid(
                             df_puts,
                             gridOptions=grid_options_puts,
@@ -881,13 +1010,13 @@ def show_team_portfolio():
                             fit_columns_on_grid_load=False,
                             key='puts'
                         )
-                        selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
+                        st.session_state.selected_puts = pd.DataFrame(grid_response_puts.get("selected_rows", []))
         # Step 2: Trade Details Input
         trade_details = []
-        if not selected_existing.empty or not selected_calls.empty or not selected_puts.empty:
+        if not st.session_state.selected_existing.empty or not st.session_state.selected_calls.empty or not st.session_state.selected_puts.empty:
             st.markdown("### 🧮 Specify Trade Details")
 
-            selected_legs = pd.concat([selected_existing, selected_calls, selected_puts], ignore_index=True)
+            selected_legs = pd.concat([st.session_state.selected_existing, st.session_state.selected_calls, st.session_state.selected_puts], ignore_index=True)
             for idx, leg in selected_legs.iterrows():
                 with st.container():
                     col1, col2, col3, col4 = st.columns(4)
@@ -933,7 +1062,7 @@ def show_team_portfolio():
                     })
 
 
-
+            canBuy= False
             # if isMarketHours() and trade_details and  st.button("Execute Trade", on_click=reviewTrade):
             if trade_details:
                 # Save in session state to persist after rerun
@@ -1010,6 +1139,8 @@ def show_team_portfolio():
                     - 💰 **Total (Spent - Received)**: ${net_total:,.2f}
                     """)
 
+                    canBuy = net_total <= free_cash
+
                     # if opening_positions:
                     #     # st.write(total_closing_credit, total_opening_cost)
                     #     if total_closing_credit > total_opening_cost:
@@ -1017,7 +1148,7 @@ def show_team_portfolio():
                     #         st.stop()
 
                 # if st.button('🚀 Execute Trade') and isMarketHours():
-                if st.button('🚀 Execute Trade') :
+                if st.button('🚀 Execute Trade') and canBuy and isMarketHours():
                     # ✅ Process Opening Trades
                     for detail in opening_positions:
                         existing = pd.DataFrame() if opts_df.empty else opts_df[
@@ -1096,6 +1227,8 @@ def show_team_portfolio():
                     st.rerun()
                 elif not isMarketHours():
                     st.error('⌚ OUTSIDE MARKET HOURS')
+                elif not canBuy:
+                    st.error('💸 INSUFFICIENT FUNDS')
 
     with tab_log:
         st.subheader("👟 Activity Log")
