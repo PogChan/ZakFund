@@ -200,7 +200,7 @@ def compute_option_fill_price(bid: float, ask: float, is_buy: bool) -> float:
     else if sell => 40% of spread.
     """
     spread = ask - bid
-    if ask <= 0 or bid < 0 or ask < bid
+    if ask <= 0 or bid < 0 or ask < bid:
         return 0
     spread_ratio = spread / ask
     if spread_ratio > 0.2:
