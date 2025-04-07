@@ -330,7 +330,7 @@ def log_shares_activity(team_id: int, trdAction:str, ticker: str, shares_added: 
     }).execute()
 
 
-def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str, expiration, strike: float, contracts_added: float, price: float, realized_pl=0):
+def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str, expiration, strike: float, contracts_added: float, price: float, avg_cost:float, realized_pl=0):
     color = "#65FE08" if contracts_added > 0 else "red"
     sign = "+" if contracts_added > 0 else ""
 
@@ -361,6 +361,7 @@ def log_options_activity(team_id: int, trdAction:str, symbol: str, call_put: str
         "trade_type": trdAction,
         "type": "Option",
         "fill_price": price,
+        'avg_cost': avg_cost,
         "realized_pl": realized_pl,
     }).execute()
 # -----------------------------------------------------------------------------
@@ -415,6 +416,7 @@ def refresh_portfolio_prices(team_id: int):
                     strike=strike,
                     contracts_added=-contracts_held,
                     price=0.00,
+                    avg_cost=row["avg_cost"],
                     realized_pl=realized_pl
                 )
 
@@ -448,6 +450,7 @@ def refresh_portfolio_prices(team_id: int):
                     strike=strike,
                     contracts_added=-contracts_held,
                     price=strike,
+                    avg_cost=row["avg_cost"],
                     realized_pl = -row["avg_cost"] * contracts_held * 100
                 )
 
@@ -1172,7 +1175,7 @@ def show_team_portfolio():
 
                         upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], new_total, new_avg, fill_price)
                         log_options_activity(st.session_state["team_id"], tradeAction.BTO if trade_qty > 0 else tradeAction.STO, detail['Symbol'], detail["Type"],
-                                            detail['Expiration'], detail["Strike"], trade_qty, fill_price, realized_pl=0)
+                                            detail['Expiration'], detail["Strike"], trade_qty, fill_price, new_avg, realized_pl=0)
 
                     # ✅ Process Closing Trades
                     for detail in closing_positions:
@@ -1208,11 +1211,11 @@ def show_team_portfolio():
                         if leftover == 0:
                             delete_option_by_id(opt_id)
                             log_options_activity(st.session_state["team_id"], tradeAction.CLOSE, detail['Symbol'], detail["Type"],
-                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
+                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, old_avg, realized_pl=realized)
                         else:
                             upsert_option(opt_id, st.session_state["team_id"], detail['Symbol'], detail["Type"], detail['Expiration'], detail["Strike"], leftover, old_avg, fill_price)
                             log_options_activity(st.session_state["team_id"], tradeAction.STC if trade_qty > 0 else tradeAction.BTC, detail['Symbol'], detail["Type"],
-                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, realized_pl=realized)
+                                                detail['Expiration'], detail["Strike"], -trade_qty, fill_price, old_avg, realized_pl=realized)
 
                     st.success("✅ Trade executed successfully.")
                     st.session_state.trade_stage = 0
